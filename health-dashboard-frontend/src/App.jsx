@@ -3,57 +3,65 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import DashboardLayout from './components/Layout/DashboardLayout';
+
 import Login from './pages/Login';
 import Register from './pages/Register';
+
 import Dashboard from './pages/Dashboard';
 import Maps from './pages/Maps';
 import Predictions from './pages/Predictions';
+
+// ✅ NOVAS PÁGINAS
+import Analytics from './pages/Analytics';
+import Data from './pages/Data';
+import ProfilePage from './pages/account/ProfilePage';
+import SystemSettingsPage from './pages/system/SystemSettingsPage';
+import Users from './pages/Users';
+
 import './App.css';
 
-// Configurar axios base URL
 import axios from 'axios';
-// axios.defaults.baseURL = 'https://5000-iza1stnqhyn0nc0f25z37-06379296.manusvm.computer'; // Alterado para a URL pública do sandbox
-axios.defaults.baseURL = 'http://localhost:5000'; // URL do backend local para desenvolvimento
+axios.defaults.baseURL = 'http://localhost:5000';
 
+const PrivatePage = ({ children }) => (
+  <PrivateRoute>
+    <DashboardLayout>{children}</DashboardLayout>
+  </PrivateRoute>
+);
+
+const AdminPage = ({ children }) => (
+  <PrivateRoute adminOnly>
+    <DashboardLayout>{children}</DashboardLayout>
+  </PrivateRoute>
+);
 
 function App() {
   return (
     <AuthProvider>
       <Router>
         <Routes>
-          {/* Rotas públicas */}
+          {/* Públicas */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          
-          {/* Rotas privadas */}
-          <Route path="/dashboard" element={
-            <PrivateRoute>
-              <DashboardLayout>
-                <Dashboard />
-              </DashboardLayout>
-            </PrivateRoute>
-          } />
-          
-          <Route path="/maps" element={
-            <PrivateRoute>
-              <DashboardLayout>
-                <Maps />
-              </DashboardLayout>
-            </PrivateRoute>
-          } />
-          
-          <Route path="/predictions" element={
-            <PrivateRoute>
-              <DashboardLayout>
-                <Predictions />
-              </DashboardLayout>
-            </PrivateRoute>
-          } />
-          
-          {/* Rota padrão */}
+
+          {/* Privadas (menu principal) */}
+          <Route path="/dashboard" element={<PrivatePage><Dashboard /></PrivatePage>} />
+          <Route path="/analytics" element={<PrivatePage><Analytics /></PrivatePage>} />
+          <Route path="/maps" element={<PrivatePage><Maps /></PrivatePage>} />
+          <Route path="/data" element={<PrivatePage><Data /></PrivatePage>} />
+          <Route path="/predictions" element={<PrivatePage><Predictions /></PrivatePage>} />
+
+          {/* Privada (perfil) */}
+          <Route path="/account/profile" element={<PrivatePage><ProfilePage /></PrivatePage>} />
+
+          {/* Admin */}
+          <Route path="/admin/users" element={<AdminPage><Users /></AdminPage>} />
+          <Route path="/admin/system" element={<AdminPage><SystemSettingsPage /></AdminPage>} />
+
+          {/* Default */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          
-          {/* Rota 404 */}
+
+          {/* 404 */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Router>
@@ -62,4 +70,3 @@ function App() {
 }
 
 export default App;
-

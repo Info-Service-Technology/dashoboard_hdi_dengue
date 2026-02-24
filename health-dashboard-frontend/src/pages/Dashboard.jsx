@@ -1,21 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { 
-  Activity, 
-  TrendingUp, 
-  Users, 
-  AlertTriangle,
-  BarChart3,
-  Map,
-  Calendar,
-  Download
-} from 'lucide-react';
+import { AlertTriangle, Calendar, Download } from 'lucide-react';
 import {
-  LineChart,
-  Line,
   AreaChart,
   Area,
   PieChart,
@@ -33,297 +22,263 @@ import {
 import axios from 'axios';
 
 const Dashboard = () => {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, token } = useAuth();
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Dados simulados para demonstração
-  const mockData = {
-    total_cases: 1000,
-    hospitalization_rate: 15.2,
-    death_rate: 2.1,
-    cases_by_disease: [
-      { disease: 'Dengue', count: 500 },
-      { disease: 'Chikungunya', count: 200 },
-      { disease: 'Coqueluche', count: 100 },
-      { disease: 'Zika', count: 150 },
-      { disease: 'Rotavírus', count: 50 }
-    ],
-    cases_by_month: [
-      { month: '2024-01', count: 45 },
-      { month: '2024-02', count: 52 },
-      { month: '2024-03', count: 78 },
-      { month: '2024-04', count: 95 },
-      { month: '2024-05', count: 120 },
-      { month: '2024-06', count: 140 },
-      { month: '2024-07', count: 165 },
-      { month: '2024-08', count: 180 },
-      { month: '2024-09', count: 155 },
-      { month: '2024-10', count: 135 },
-      { month: '2024-11', count: 110 },
-      { month: '2024-12', count: 85 }
-    ],
-    cases_by_uf: [
-      { uf: 'SP', count: 250 },
-      { uf: 'RJ', count: 180 },
-      { uf: 'MG', count: 150 },
-      { uf: 'BA', count: 120 },
-      { uf: 'PR', count: 100 },
-      { uf: 'RS', count: 80 },
-      { uf: 'SC', count: 70 },
-      { uf: 'GO', count: 50 }
-    ]
-  };
+  // Paleta simples (vai ciclar se tiver mais doenças)
+  const COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0ea5e9', '#22c55e', '#e11d48'];
 
   useEffect(() => {
+    let alive = true;
+
     const fetchDashboardData = async () => {
       try {
-        // Simular carregamento
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setDashboardData(mockData);
+        if (!alive) return;
+        setLoading(true);
+        setError(null);
+
+        if (!token) {
+          setDashboardData(null);
+          setError('Você precisa estar logado para ver o dashboard.');
+          setLoading(false); // ✅ evita ficar preso no spinner
+          return;
+        }
+
+        // ✅ usa Bearer (JWT)
+        const response = await axios.get('http://localhost:5000/api/dashboard', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!alive) return;
+        setDashboardData(response.data);
       } catch (err) {
+        console.error(err);
+        if (!alive) return;
         setError('Erro ao carregar dados do dashboard');
-        console.error('Erro:', err);
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     };
 
     fetchDashboardData();
-  }, []);
+    return () => { alive = false; };
+  }, [token]);
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
+  // =========================
+  // ✅ UF x Doença (stacked)
+  // =========================
+  const { ufStackedData, diseaseKeys } = useMemo(() => {
+    const rows = dashboardData?.cases_by_uf_disease;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { ufStackedData: [], diseaseKeys: [] };
+    }
+
+    // Lista de doenças presentes no dataset (ordenada p/ consistência)
+    const diseases = Array.from(new Set(rows.map(r => r.disease).filter(Boolean))).sort();
+
+    // Pivot: { RJ: { uf:"RJ", Dengue: 10, Zika: 2, ... }, ... }
+    const pivot = new Map();
+
+    for (const r of rows) {
+      const uf = r.uf;
+      const disease = r.disease;
+      const count = Number(r.count || 0);
+
+      if (!uf || !disease) continue;
+
+      if (!pivot.has(uf)) {
+        // inicializa com 0 para todas as doenças (evita undefined no gráfico)
+        const base = { uf };
+        for (const d of diseases) base[d] = 0;
+        pivot.set(uf, base);
+      }
+
+      pivot.get(uf)[disease] = count;
+    }
+
+    // transforma em array e calcula total p/ ordenar top 10 UFs
+    const arr = Array.from(pivot.values()).map((row) => {
+      const total = diseases.reduce((acc, d) => acc + (Number(row[d]) || 0), 0);
+      return { ...row, __total: total };
+    });
+
+    // Ordena por total desc e limita top 10
+    arr.sort((a, b) => (b.__total || 0) - (a.__total || 0));
+    const top10 = arr.slice(0, 10).map(({ __total, ...rest }) => rest); // ✅ remove total do dataset do gráfico
+
+    return { ufStackedData: top10, diseaseKeys: diseases };
+  }, [dashboardData]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <p className="text-gray-600">{error}</p>
-        </div>
+      <div className="flex items-center justify-center h-64 text-red-600">
+        <AlertTriangle className="mr-2" />
+        {error}
       </div>
     );
   }
 
+  if (!dashboardData) return null;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Dashboard de Análise Preditiva
-          </h1>
-          <p className="text-gray-600 mt-1">
-            Bem-vindo, {user?.first_name}! Aqui está um resumo dos dados de saúde.
-          </p>
+          <h1 className="text-2xl font-bold">Dashboard de Análise Preditiva</h1>
+          <p className="text-gray-600">Bem-vindo, {user?.first_name}</p>
         </div>
-        <div className="flex items-center space-x-3 mt-4 sm:mt-0">
-          <Badge variant="outline" className="flex items-center space-x-1">
-            <Calendar className="h-3 w-3" />
-            <span>Última atualização: Hoje</span>
+
+        <div className="flex gap-3">
+          <Badge variant="outline">
+            <Calendar className="h-3 w-3 mr-1" />
+            Atualizado hoje
           </Badge>
+
           {isAdmin && (
-            <Button size="sm" className="flex items-center space-x-2">
-              <Download className="h-4 w-4" />
-              <span>Exportar</span>
+            <Button size="sm">
+              <Download className="h-4 w-4 mr-1" />
+              Exportar
             </Button>
           )}
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total de Casos</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
+          <CardHeader>
+            <CardTitle>Total de Casos</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-bold">
+            {dashboardData.total_cases}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Hospitalizações</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.total_cases?.toLocaleString()}</div>
+            <div className="text-2xl font-bold">{dashboardData.hospitalization_count}</div>
             <p className="text-xs text-muted-foreground">
-              +12% em relação ao mês anterior
+              {dashboardData.hospitalization_rate}% do total de casos
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Taxa de Hospitalização</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Óbitos Confirmados</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.hospitalization_rate}%</div>
+            <div className="text-2xl font-bold">{dashboardData.death_count}</div>
             <p className="text-xs text-muted-foreground">
-              -2.1% em relação ao mês anterior
+              Taxa de letalidade: {dashboardData.death_rate}%
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Taxa de Óbitos</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+          <CardHeader>
+            <CardTitle>Doenças Monitoradas</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.death_rate}%</div>
-            <p className="text-xs text-muted-foreground">
-              -0.5% em relação ao mês anterior
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Doenças Monitoradas</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.cases_by_disease?.length}</div>
-            <p className="text-xs text-muted-foreground">
-              Arboviroses e outras doenças
-            </p>
+          <CardContent className="text-2xl font-bold">
+            {Array.isArray(dashboardData.cases_by_disease) ? dashboardData.cases_by_disease.length : 0}
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts */}
+      {/* GRÁFICOS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Evolução Temporal */}
+        {/* EVOLUÇÃO MENSAL */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <BarChart3 className="h-5 w-5" />
-              <span>Evolução Temporal dos Casos</span>
-            </CardTitle>
-            <CardDescription>
-              Número de casos notificados por mês
-            </CardDescription>
+            <CardTitle>Evolução Mensal de Casos</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={dashboardData?.cases_by_month}>
+              <AreaChart data={dashboardData.cases_by_month || []}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
                 <Tooltip />
-                <Area 
-                  type="monotone" 
-                  dataKey="count" 
-                  stroke="#0088FE" 
-                  fill="#0088FE" 
-                  fillOpacity={0.3}
-                />
+                <Area dataKey="count" stroke="#2563eb" fill="#2563eb" fillOpacity={0.3} />
               </AreaChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Distribuição por Doença */}
+        {/* DOENÇAS */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Activity className="h-5 w-5" />
-              <span>Distribuição por Doença</span>
-            </CardTitle>
-            <CardDescription>
-              Proporção de casos por tipo de doença
-            </CardDescription>
+            <CardTitle>Distribuição por Doença</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={dashboardData?.cases_by_disease}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ disease, percent }) => `${disease} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
+                  data={dashboardData.cases_by_disease || []}
                   dataKey="count"
+                  nameKey="disease"
+                  outerRadius={100}
+                  label
                 >
-                  {dashboardData?.cases_by_disease?.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  {(dashboardData.cases_by_disease || []).map((_, index) => (
+                    <Cell key={index} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
+                <Legend />
               </PieChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* Geographic Distribution */}
+      {/* ✅ CASOS POR UF (STACKED POR DOENÇA) */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Map className="h-5 w-5" />
-            <span>Distribuição Geográfica</span>
-          </CardTitle>
-          <CardDescription>
-            Casos por Unidade Federativa (Top 8)
-          </CardDescription>
+          <CardTitle>Casos por Unidade Federativa (por Doença)</CardTitle>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={dashboardData?.cases_by_uf}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="uf" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="count" fill="#00C49F" />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Recent Activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Atividades Recentes</CardTitle>
-          <CardDescription>
-            Últimas atualizações do sistema
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center space-x-4">
-              <div className="p-2 bg-blue-100 rounded-full">
-                <Activity className="h-4 w-4 text-blue-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">Novos casos de Dengue registrados</p>
-                <p className="text-xs text-gray-500">45 novos casos em São Paulo - há 2 horas</p>
-              </div>
+          {!ufStackedData.length ? (
+            <div className="text-sm text-muted-foreground">
+              Sem dados suficientes para UF x Doença. Verifique se o backend retorna <code>cases_by_uf_disease</code>.
             </div>
-            <div className="flex items-center space-x-4">
-              <div className="p-2 bg-green-100 rounded-full">
-                <TrendingUp className="h-4 w-4 text-green-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">Relatório mensal gerado</p>
-                <p className="text-xs text-gray-500">Análise de arboviroses - há 4 horas</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="p-2 bg-yellow-100 rounded-full">
-                <AlertTriangle className="h-4 w-4 text-yellow-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">Alerta epidemiológico</p>
-                <p className="text-xs text-gray-500">Aumento de casos de Chikungunya no RJ - há 6 horas</p>
-              </div>
-            </div>
-          </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={360}>
+              <BarChart data={ufStackedData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="uf" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                {diseaseKeys.map((disease, idx) => (
+                  <Bar
+                    key={disease}
+                    dataKey={disease}
+                    stackId="a"
+                    name={disease}
+                    fill={COLORS[idx % COLORS.length]}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            * Mostrando Top 10 UFs por total (somando todas as doenças).
+          </p>
         </CardContent>
       </Card>
     </div>
@@ -331,4 +286,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-

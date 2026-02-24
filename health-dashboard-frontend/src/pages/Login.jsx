@@ -62,7 +62,7 @@ const Login = () => {
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center space-x-2">
             <Activity className="h-8 w-8 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">HDI - Systems - Dashboard de Saúde</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Health Data Insights</h1>
           </div>
           <p className="text-gray-600">Análise Preditiva em Saúde Pública</p>
         </div>

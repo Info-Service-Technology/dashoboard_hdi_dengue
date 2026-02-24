@@ -1,0 +1,3 @@
+ALTER TABLE user_profile
+  ADD COLUMN avatar_url VARCHAR(255) NULL,
+  ADD COLUMN theme VARCHAR(20) NOT NULL DEFAULT 'light';

@@ -68,8 +68,8 @@ const Sidebar = ({ isOpen, onClose }) => {
     }
   ];
 
-  const isActive = (path) => location.pathname === path;
-
+  const isActive = (path) =>
+  location.pathname === path || location.pathname.startsWith(path + '/');
   const handleLogout = () => {
     logout();
     onClose?.();
@@ -137,6 +137,12 @@ const Sidebar = ({ isOpen, onClose }) => {
               {menuItems.map((item) => {
                 const Icon = item.icon;
                 return (
+                  {
+                    title: 'Perfil',
+                    icon: User,
+                    path: '/account/profile',
+                    description: 'Minha conta'
+                  },
                   <Link
                     key={item.path}
                     to={item.path}

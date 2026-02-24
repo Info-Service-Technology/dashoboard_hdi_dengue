@@ -1,4 +1,4 @@
-#!/home/mauro-lucio-pereira-da-silva/nfs/manus/saude/venv/bin/python
+#!/home/mauroslucios/workspace/dashboard_manus/backend_dashboard_saude_src/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

@@ -5,14 +5,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS, cross_origin
-from flask_jwt_extended import JWTManager
+from flask_jwt_extended import JWTManager, jwt_required # coloquei jwt_required para testar se estava funcionando
 from src.models.user import db, User
 from src.routes.user import user_bp
 from src.routes.auth import auth_bp
 from src.routes.health_data import health_data_bp
 from src.routes.predictions import predictions_bp
+from src.routes.maps import maps_bp
+from src.routes.dashboard import dashboard_bp
+from src.routes.account import account_bp
+from src.routes.system import system_bp
+from src.routes.uploads import uploads_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
+#app.register_blueprint(maps_bp, url_prefix="/api")
+app.register_blueprint(maps_bp, url_prefix="/api")
+app.register_blueprint(dashboard_bp, url_prefix="/api")
+app.register_blueprint(account_bp, url_prefix="/api")
+app.register_blueprint(system_bp, url_prefix="/api")
+app.register_blueprint(uploads_bp, url_prefix="/api")
 
 # Configurações
 app.config['SECRET_KEY'] = 'health-dashboard-secret-key-2025'
@@ -59,6 +70,7 @@ def test():
 
 @app.route('/', defaults={'path': ''}) 
 @app.route('/<path:path>')
+@jwt_required() # coloquei jwt_required para testar se estava funcionando
 def serve(path):
     static_folder_path = app.static_folder
     if static_folder_path is None:

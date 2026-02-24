@@ -1,0 +1,645 @@
+{
+  "cases_by_disease": [
+    {
+      "count": 319006,
+      "disease": "Dengue"
+    },
+    {
+      "count": 30844,
+      "disease": "Chikungunya"
+    },
+    {
+      "count": 2512,
+      "disease": "Coqueluche"
+    },
+    {
+      "count": 1315,
+      "disease": "Rotav\u00edrus"
+    },
+    {
+      "count": 101,
+      "disease": "Zika"
+    }
+  ],
+  "cases_by_month": [
+    {
+      "count": 2503,
+      "month": "2024-12"
+    },
+    {
+      "count": 225345,
+      "month": "2025-01"
+    },
+    {
+      "count": 124992,
+      "month": "2025-02"
+    },
+    {
+      "count": 203,
+      "month": "2025-03"
+    },
+    {
+      "count": 165,
+      "month": "2025-04"
+    },
+    {
+      "count": 115,
+      "month": "2025-05"
+    },
+    {
+      "count": 140,
+      "month": "2025-06"
+    },
+    {
+      "count": 189,
+      "month": "2025-07"
+    },
+    {
+      "count": 114,
+      "month": "2025-08"
+    },
+    {
+      "count": 12,
+      "month": "2025-09"
+    }
+  ],
+  "cases_by_uf": [
+    {
+      "count": 197752,
+      "uf": "SP"
+    },
+    {
+      "count": 39945,
+      "uf": "MG"
+    },
+    {
+      "count": 25063,
+      "uf": "MT"
+    },
+    {
+      "count": 19468,
+      "uf": "PR"
+    },
+    {
+      "count": 17947,
+      "uf": "GO"
+    },
+    {
+      "count": 6621,
+      "uf": "RJ"
+    },
+    {
+      "count": 6020,
+      "uf": "MS"
+    },
+    {
+      "count": 5570,
+      "uf": "BA"
+    },
+    {
+      "count": 5490,
+      "uf": "AC"
+    },
+    {
+      "count": 5402,
+      "uf": "PA"
+    }
+  ],
+  "cases_by_uf_disease": [
+    {
+      "count": 205,
+      "disease": "Chikungunya",
+      "uf": "AC"
+    },
+    {
+      "count": 1,
+      "disease": "Coqueluche",
+      "uf": "AC"
+    },
+    {
+      "count": 5260,
+      "disease": "Dengue",
+      "uf": "AC"
+    },
+    {
+      "count": 24,
+      "disease": "Zika",
+      "uf": "AC"
+    },
+    {
+      "count": 9,
+      "disease": "Chikungunya",
+      "uf": "AL"
+    },
+    {
+      "count": 7,
+      "disease": "Coqueluche",
+      "uf": "AL"
+    },
+    {
+      "count": 393,
+      "disease": "Dengue",
+      "uf": "AL"
+    },
+    {
+      "count": 3,
+      "disease": "Zika",
+      "uf": "AL"
+    },
+    {
+      "count": 62,
+      "disease": "Chikungunya",
+      "uf": "AM"
+    },
+    {
+      "count": 20,
+      "disease": "Coqueluche",
+      "uf": "AM"
+    },
+    {
+      "count": 1384,
+      "disease": "Dengue",
+      "uf": "AM"
+    },
+    {
+      "count": 263,
+      "disease": "Rotav\u00edrus",
+      "uf": "AM"
+    },
+    {
+      "count": 77,
+      "disease": "Chikungunya",
+      "uf": "AP"
+    },
+    {
+      "count": 423,
+      "disease": "Dengue",
+      "uf": "AP"
+    },
+    {
+      "count": 59,
+      "disease": "Rotav\u00edrus",
+      "uf": "AP"
+    },
+    {
+      "count": 572,
+      "disease": "Chikungunya",
+      "uf": "BA"
+    },
+    {
+      "count": 75,
+      "disease": "Coqueluche",
+      "uf": "BA"
+    },
+    {
+      "count": 4888,
+      "disease": "Dengue",
+      "uf": "BA"
+    },
+    {
+      "count": 32,
+      "disease": "Rotav\u00edrus",
+      "uf": "BA"
+    },
+    {
+      "count": 3,
+      "disease": "Zika",
+      "uf": "BA"
+    },
+    {
+      "count": 360,
+      "disease": "Chikungunya",
+      "uf": "CE"
+    },
+    {
+      "count": 3,
+      "disease": "Coqueluche",
+      "uf": "CE"
+    },
+    {
+      "count": 910,
+      "disease": "Dengue",
+      "uf": "CE"
+    },
+    {
+      "count": 4,
+      "disease": "Zika",
+      "uf": "CE"
+    },
+    {
+      "count": 43,
+      "disease": "Chikungunya",
+      "uf": "DF"
+    },
+    {
+      "count": 64,
+      "disease": "Coqueluche",
+      "uf": "DF"
+    },
+    {
+      "count": 3215,
+      "disease": "Dengue",
+      "uf": "DF"
+    },
+    {
+      "count": 33,
+      "disease": "Rotav\u00edrus",
+      "uf": "DF"
+    },
+    {
+      "count": 1,
+      "disease": "Zika",
+      "uf": "DF"
+    },
+    {
+      "count": 441,
+      "disease": "Chikungunya",
+      "uf": "GO"
+    },
+    {
+      "count": 32,
+      "disease": "Coqueluche",
+      "uf": "GO"
+    },
+    {
+      "count": 17399,
+      "disease": "Dengue",
+      "uf": "GO"
+    },
+    {
+      "count": 74,
+      "disease": "Rotav\u00edrus",
+      "uf": "GO"
+    },
+    {
+      "count": 1,
+      "disease": "Zika",
+      "uf": "GO"
+    },
+    {
+      "count": 153,
+      "disease": "Chikungunya",
+      "uf": "MA"
+    },
+    {
+      "count": 2,
+      "disease": "Coqueluche",
+      "uf": "MA"
+    },
+    {
+      "count": 612,
+      "disease": "Dengue",
+      "uf": "MA"
+    },
+    {
+      "count": 68,
+      "disease": "Rotav\u00edrus",
+      "uf": "MA"
+    },
+    {
+      "count": 3742,
+      "disease": "Chikungunya",
+      "uf": "MG"
+    },
+    {
+      "count": 341,
+      "disease": "Coqueluche",
+      "uf": "MG"
+    },
+    {
+      "count": 35594,
+      "disease": "Dengue",
+      "uf": "MG"
+    },
+    {
+      "count": 265,
+      "disease": "Rotav\u00edrus",
+      "uf": "MG"
+    },
+    {
+      "count": 3,
+      "disease": "Zika",
+      "uf": "MG"
+    },
+    {
+      "count": 3535,
+      "disease": "Chikungunya",
+      "uf": "MS"
+    },
+    {
+      "count": 18,
+      "disease": "Coqueluche",
+      "uf": "MS"
+    },
+    {
+      "count": 2458,
+      "disease": "Dengue",
+      "uf": "MS"
+    },
+    {
+      "count": 9,
+      "disease": "Zika",
+      "uf": "MS"
+    },
+    {
+      "count": 11968,
+      "disease": "Chikungunya",
+      "uf": "MT"
+    },
+    {
+      "count": 12,
+      "disease": "Coqueluche",
+      "uf": "MT"
+    },
+    {
+      "count": 13083,
+      "disease": "Dengue",
+      "uf": "MT"
+    },
+    {
+      "count": 331,
+      "disease": "Chikungunya",
+      "uf": "PA"
+    },
+    {
+      "count": 21,
+      "disease": "Coqueluche",
+      "uf": "PA"
+    },
+    {
+      "count": 5050,
+      "disease": "Dengue",
+      "uf": "PA"
+    },
+    {
+      "count": 411,
+      "disease": "Chikungunya",
+      "uf": "PB"
+    },
+    {
+      "count": 2,
+      "disease": "Coqueluche",
+      "uf": "PB"
+    },
+    {
+      "count": 980,
+      "disease": "Dengue",
+      "uf": "PB"
+    },
+    {
+      "count": 82,
+      "disease": "Rotav\u00edrus",
+      "uf": "PB"
+    },
+    {
+      "count": 440,
+      "disease": "Chikungunya",
+      "uf": "PE"
+    },
+    {
+      "count": 50,
+      "disease": "Coqueluche",
+      "uf": "PE"
+    },
+    {
+      "count": 2166,
+      "disease": "Dengue",
+      "uf": "PE"
+    },
+    {
+      "count": 59,
+      "disease": "Rotav\u00edrus",
+      "uf": "PE"
+    },
+    {
+      "count": 4,
+      "disease": "Zika",
+      "uf": "PE"
+    },
+    {
+      "count": 39,
+      "disease": "Chikungunya",
+      "uf": "PI"
+    },
+    {
+      "count": 5,
+      "disease": "Coqueluche",
+      "uf": "PI"
+    },
+    {
+      "count": 587,
+      "disease": "Dengue",
+      "uf": "PI"
+    },
+    {
+      "count": 680,
+      "disease": "Chikungunya",
+      "uf": "PR"
+    },
+    {
+      "count": 802,
+      "disease": "Coqueluche",
+      "uf": "PR"
+    },
+    {
+      "count": 17918,
+      "disease": "Dengue",
+      "uf": "PR"
+    },
+    {
+      "count": 64,
+      "disease": "Rotav\u00edrus",
+      "uf": "PR"
+    },
+    {
+      "count": 4,
+      "disease": "Zika",
+      "uf": "PR"
+    },
+    {
+      "count": 666,
+      "disease": "Chikungunya",
+      "uf": "RJ"
+    },
+    {
+      "count": 5955,
+      "disease": "Dengue",
+      "uf": "RJ"
+    },
+    {
+      "count": 223,
+      "disease": "Chikungunya",
+      "uf": "RN"
+    },
+    {
+      "count": 851,
+      "disease": "Dengue",
+      "uf": "RN"
+    },
+    {
+      "count": 14,
+      "disease": "Zika",
+      "uf": "RN"
+    },
+    {
+      "count": 204,
+      "disease": "Chikungunya",
+      "uf": "RO"
+    },
+    {
+      "count": 281,
+      "disease": "Dengue",
+      "uf": "RO"
+    },
+    {
+      "count": 2,
+      "disease": "Rotav\u00edrus",
+      "uf": "RO"
+    },
+    {
+      "count": 18,
+      "disease": "Chikungunya",
+      "uf": "RR"
+    },
+    {
+      "count": 7,
+      "disease": "Coqueluche",
+      "uf": "RR"
+    },
+    {
+      "count": 71,
+      "disease": "Dengue",
+      "uf": "RR"
+    },
+    {
+      "count": 52,
+      "disease": "Chikungunya",
+      "uf": "RS"
+    },
+    {
+      "count": 247,
+      "disease": "Coqueluche",
+      "uf": "RS"
+    },
+    {
+      "count": 2431,
+      "disease": "Dengue",
+      "uf": "RS"
+    },
+    {
+      "count": 15,
+      "disease": "Rotav\u00edrus",
+      "uf": "RS"
+    },
+    {
+      "count": 77,
+      "disease": "Chikungunya",
+      "uf": "SC"
+    },
+    {
+      "count": 206,
+      "disease": "Coqueluche",
+      "uf": "SC"
+    },
+    {
+      "count": 4930,
+      "disease": "Dengue",
+      "uf": "SC"
+    },
+    {
+      "count": 55,
+      "disease": "Rotav\u00edrus",
+      "uf": "SC"
+    },
+    {
+      "count": 2,
+      "disease": "Zika",
+      "uf": "SC"
+    },
+    {
+      "count": 80,
+      "disease": "Chikungunya",
+      "uf": "SE"
+    },
+    {
+      "count": 6,
+      "disease": "Coqueluche",
+      "uf": "SE"
+    },
+    {
+      "count": 323,
+      "disease": "Dengue",
+      "uf": "SE"
+    },
+    {
+      "count": 110,
+      "disease": "Rotav\u00edrus",
+      "uf": "SE"
+    },
+    {
+      "count": 6286,
+      "disease": "Chikungunya",
+      "uf": "SP"
+    },
+    {
+      "count": 589,
+      "disease": "Coqueluche",
+      "uf": "SP"
+    },
+    {
+      "count": 190833,
+      "disease": "Dengue",
+      "uf": "SP"
+    },
+    {
+      "count": 33,
+      "disease": "Rotav\u00edrus",
+      "uf": "SP"
+    },
+    {
+      "count": 11,
+      "disease": "Zika",
+      "uf": "SP"
+    },
+    {
+      "count": 170,
+      "disease": "Chikungunya",
+      "uf": "TO"
+    },
+    {
+      "count": 2,
+      "disease": "Coqueluche",
+      "uf": "TO"
+    },
+    {
+      "count": 1011,
+      "disease": "Dengue",
+      "uf": "TO"
+    },
+    {
+      "count": 101,
+      "disease": "Rotav\u00edrus",
+      "uf": "TO"
+    },
+    {
+      "count": 18,
+      "disease": "Zika",
+      "uf": "TO"
+    }
+  ],
+  "death_count": 149,
+  "death_rate": 0.0,
+  "diseases": [
+    "Chikungunya",
+    "Coqueluche",
+    "Dengue",
+    "Rotav\u00edrus",
+    "Zika"
+  ],
+  "filters": {
+    "disease": "all"
+  },
+  "hospitalization_count": 14076,
+  "hospitalization_rate": 4.0,
+  "total_cases": 353778
+}
