@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import DashboardLayout from './components/Layout/DashboardLayout';
-
+import { Toaster } from "sonner";
 import Login from './pages/Login';
 import Register from './pages/Register';
 
@@ -38,6 +38,7 @@ const AdminPage = ({ children }) => (
 function App() {
   return (
     <AuthProvider>
+      <Toaster richColors position="top-right" />
       <Router>
         <Routes>
           {/* Públicas */}
