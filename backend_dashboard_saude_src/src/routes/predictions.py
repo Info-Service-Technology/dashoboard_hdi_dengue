@@ -3,9 +3,15 @@ from flask_jwt_extended import jwt_required
 import mysql.connector
 import numpy as np
 from datetime import datetime, timedelta
+from sqlalchemy import func
+from datetime import timedelta
+import math
+
+from src.models.user import db
+from src.models.health_data import HealthCase, Municipality
+from src.routes.analytics import _base_query, _trend_bucket
 
 predictions_bp = Blueprint("predictions", __name__)
-
 # =========================
 # DB CONNECTION
 # =========================
@@ -229,3 +235,75 @@ def recommendations(score: float):
         "Alto": ["Ações preventivas urgentes"],
         "Muito Alto": ["Plano de contingência imediato"]
     }[risk_level(score)]
+
+@predictions_bp.route("/predictions/trends", methods=["GET"])
+@jwt_required()
+def prediction_trends():
+    """
+    Projeção linear simples baseada na série histórica.
+    """
+    try:
+        horizon = int(request.args.get("horizon", 12))
+        gran = (request.args.get("gran") or "week").strip().lower()
+
+        q, disease, uf, start_dt, end_dt = _base_query()
+
+        q = q.filter(HealthCase.dt_notific.isnot(None))
+        q = q.filter(HealthCase.dt_notific >= start_dt.date())
+        q = q.filter(HealthCase.dt_notific < end_dt.date())
+
+        bucket = _trend_bucket(gran)
+
+        rows = (
+            q.with_entities(bucket.label("bucket"), func.count(HealthCase.id).label("cases"))
+            .group_by("bucket")
+            .order_by("bucket")
+            .all()
+        )
+
+        if len(rows) < 2:
+            return jsonify([]), 200
+
+        # Série histórica
+        y = [int(r.cases) for r in rows]
+        n = len(y)
+
+        # Índices 0..n-1
+        x = list(range(n))
+
+        # Regressão linear OLS fechada
+        x_mean = sum(x) / n
+        y_mean = sum(y) / n
+
+        num = sum((x[i] - x_mean) * (y[i] - y_mean) for i in range(n))
+        den = sum((x[i] - x_mean) ** 2 for i in range(n))
+
+        slope = num / den if den != 0 else 0
+        intercept = y_mean - slope * x_mean
+
+        # Gera buckets futuros
+        last_bucket = rows[-1].bucket
+        predictions = []
+
+        for i in range(1, horizon + 1):
+            future_x = n - 1 + i
+            pred = intercept + slope * future_x
+            pred = max(0, round(pred))
+
+            # Bucket futuro (simplificado por string)
+            if gran == "day":
+                # assume formato YYYY-MM-DD
+                future_bucket = str(last_bucket)
+            else:
+                future_bucket = f"future_{i}"
+
+            predictions.append({
+                "bucket": future_bucket,
+                "cases_pred": int(pred)
+            })
+
+        return jsonify(predictions), 200
+
+    except Exception as e:
+        print(f"❌ prediction_trends: {e}")
+        return jsonify({"error": "Erro ao gerar previsão"}), 500

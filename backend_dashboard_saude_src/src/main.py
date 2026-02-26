@@ -16,14 +16,22 @@ from src.routes.dashboard import dashboard_bp
 from src.routes.account import account_bp
 from src.routes.system import system_bp
 from src.routes.uploads import uploads_bp
+from src.routes.analytics import analytics_bp
+
+
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 #app.register_blueprint(maps_bp, url_prefix="/api")
+app.register_blueprint(user_bp, url_prefix='/api')
+app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(health_data_bp, url_prefix='/api/health')
 app.register_blueprint(maps_bp, url_prefix="/api")
 app.register_blueprint(dashboard_bp, url_prefix="/api")
 app.register_blueprint(account_bp, url_prefix="/api")
 app.register_blueprint(system_bp, url_prefix="/api")
 app.register_blueprint(uploads_bp, url_prefix="/api")
+app.register_blueprint(analytics_bp, url_prefix="/api")
+
 
 # Configurações
 app.config['SECRET_KEY'] = 'health-dashboard-secret-key-2025'
@@ -57,11 +65,6 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-# Registrar blueprints
-app.register_blueprint(user_bp, url_prefix='/api')
-app.register_blueprint(auth_bp, url_prefix='/api/auth')
-app.register_blueprint(health_data_bp, url_prefix='/api/health')
-app.register_blueprint(predictions_bp, url_prefix='/api/predictions')
 
 # Rota de teste para verificar se a API está funcionando
 @app.route('/api/test')
