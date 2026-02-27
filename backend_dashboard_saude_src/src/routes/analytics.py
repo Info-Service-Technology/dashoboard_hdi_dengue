@@ -256,6 +256,15 @@ def analytics_kpi():
             alert = f"Concentração elevada em {top_uf['uf']}."
             recommendation = "Priorizar ações e alocação de recursos na UF líder."
 
+        context = {
+            "disease": disease,                    # "Dengue" ou "all"
+            "uf": uf,                              # "SP" ou "all"
+            "period_start": start_dt.date().isoformat(),
+            "period_end": end_dt.date().isoformat(),
+            "delta_mode": delta_mode,
+            "window_days": int(delta_window_days),
+        }
+
         executive_summary = {
             "trend": trend_label,
             "risk_level": risk_level,
@@ -264,6 +273,7 @@ def analytics_kpi():
             "top_share": round(top_share * 100, 1),  # opcional (%)
             "alert": alert,
             "recommendation": recommendation,
+            "context": context,
         }
         executive_summary["context"] = {
             "disease": disease,

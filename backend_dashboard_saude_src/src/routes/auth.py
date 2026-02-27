@@ -36,6 +36,7 @@ def register():
         # Criar token de acesso
         access_token = create_access_token(
             identity=user.id,
+            additional_claims={"role": user.role},
             expires_delta=timedelta(days=7)
         )
         

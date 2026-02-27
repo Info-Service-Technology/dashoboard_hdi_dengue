@@ -236,7 +236,7 @@ def recommendations(score: float):
         "Muito Alto": ["Plano de contingência imediato"]
     }[risk_level(score)]
 
-@predictions_bp.route("/predictions/trends", methods=["GET"])
+@predictions_bp.route("/trends", methods=["GET"])
 @jwt_required()
 def prediction_trends():
     """
