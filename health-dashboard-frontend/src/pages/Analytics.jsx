@@ -15,6 +15,8 @@ import {
   Cell,
 } from "recharts";
 
+/* ---------------- UTIL ---------------- */
+
 function fmt(n) {
   const v = Number(n || 0);
   return v.toLocaleString("pt-BR");
@@ -23,9 +25,12 @@ function fmt(n) {
 function fmtDelta(delta) {
   if (delta === null || delta === undefined) return "—";
   const v = Number(delta);
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
+  if (Number.isNaN(v)) return "—";
+  const abs = Math.abs(v).toFixed(2);
+  if (v > 0) return `+${abs}%`;
+  return `${abs}%`;  // Remove o "if (v < 0)" e usa abs sempre para v <= 0
 }
+
 
 function isoDate(d) {
   const pad = (x) => String(x).padStart(2, "0");
@@ -55,8 +60,13 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+/* ---------------- PAGE ---------------- */
+
 export default function Analytics() {
   const { token } = useAuth();
+  const apiBase = "http://localhost:5000/api";
+
+  /* ---------------- COLORS ---------------- */
 
   const PALETTE = [
     "#2563eb",
@@ -71,18 +81,18 @@ export default function Analytics() {
     "#64748b",
   ];
 
-  const ufColor = (ufLabel) => {
-    let h = 0;
-    const s = String(ufLabel || "");
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return PALETTE[h % PALETTE.length];
-  };
+  const ufColor = useCallback(
+    (ufLabel) => {
+      let h = 0;
+      const s = String(ufLabel || "");
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+      return PALETTE[h % PALETTE.length];
+    },
+    [PALETTE]
+  );
 
-  // previsão
-  const [predTrends, setPredTrends] = useState([]);
-  const [loadingPred, setLoadingPred] = useState(false);
+  /* ---------------- FILTERS ---------------- */
 
-  // filtros
   const [disease, setDisease] = useState("all");
   const [uf, setUf] = useState("all");
   const [gran, setGran] = useState("week");
@@ -96,23 +106,28 @@ export default function Analytics() {
   });
   const [end, setEnd] = useState(() => isoDate(new Date()));
 
-  // dados
+  /* ---------------- DATA ---------------- */
+
   const [kpi, setKpi] = useState(null);
   const [compare, setCompare] = useState([]);
   const [trends, setTrends] = useState([]);
+  const [predTrends, setPredTrends] = useState([]);
 
-  // loading
+  /* ---------------- LOADING ---------------- */
+
   const [loadingKpi, setLoadingKpi] = useState(false);
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [loadingTrends, setLoadingTrends] = useState(false);
+  const [loadingPred, setLoadingPred] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // errors
+  /* ---------------- ERRORS ---------------- */
+
   const [errKpi, setErrKpi] = useState("");
   const [errCompare, setErrCompare] = useState("");
   const [errTrends, setErrTrends] = useState("");
 
-  const apiBase = "http://localhost:5000/api";
+  /* ---------------- QUERY STRING ---------------- */
 
   const qs = useMemo(() => {
     const params = new URLSearchParams();
@@ -139,11 +154,12 @@ export default function Analytics() {
     [authHeaders]
   );
 
+  /* ---------------- LOADERS ---------------- */
+
   const loadKpi = useCallback(async () => {
     if (!token) return;
     setLoadingKpi(true);
     setErrKpi("");
-
     try {
       const { res, body } = await fetchJson(`${apiBase}/analytics/kpi?${qs}`);
       if (res.status === 401) {
@@ -170,7 +186,6 @@ export default function Analytics() {
     if (!token) return;
     setLoadingCompare(true);
     setErrCompare("");
-
     try {
       const { res, body } = await fetchJson(`${apiBase}/analytics/compare?${qs}`);
       if (res.status === 401) {
@@ -197,7 +212,6 @@ export default function Analytics() {
     if (!token) return;
     setLoadingTrends(true);
     setErrTrends("");
-
     try {
       const { res, body } = await fetchJson(`${apiBase}/analytics/trends?${qs}`);
       if (res.status === 401) {
@@ -222,14 +236,11 @@ export default function Analytics() {
 
   const loadPredictions = useCallback(async () => {
     if (!token) return;
-
     setLoadingPred(true);
     try {
-      // qs já tem disease/uf/start/end/gran/delta_mode
       const res = await fetch(`${apiBase}/predictions/trends?${qs}&horizon=12`, {
         headers: authHeaders,
       });
-
       if (!res.ok) {
         setPredTrends([]);
         return;
@@ -244,7 +255,8 @@ export default function Analytics() {
     }
   }, [token, apiBase, qs, authHeaders]);
 
-  // debounce reload
+  /* ---------------- DEBOUNCE RELOAD ---------------- */
+
   useEffect(() => {
     if (!token) return;
     const t = setTimeout(() => {
@@ -255,6 +267,8 @@ export default function Analytics() {
     }, 250);
     return () => clearTimeout(t);
   }, [token, loadKpi, loadCompare, loadTrends, loadPredictions]);
+
+  /* ---------------- EXPORT ---------------- */
 
   const exportCsv = useCallback(async () => {
     if (!token) {
@@ -301,12 +315,15 @@ export default function Analytics() {
     }
   }, [token, apiBase, qs, authHeaders]);
 
-  // dropdowns (MVP)
+  /* ---------------- DROPDOWNS ---------------- */
+
   const diseases = ["Dengue", "Chikungunya", "Zika", "Coqueluche", "Rotavírus"];
   const ufs = [
     "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR",
-    "PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"
+    "PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO",
   ];
+
+  /* ---------------- CHART DATA ---------------- */
 
   const compareTitle =
     uf === "all" ? "Top 10 UFs (casos)" : `Top 10 municípios de ${uf} (casos)`;
@@ -322,7 +339,7 @@ export default function Analytics() {
     }));
   }, [compare]);
 
-  // junta histórico + previsão, com "ponte" no último ponto histórico
+  // histórico + previsão (sem TDZ)
   const trendsData = useMemo(() => {
     const hist = trends.map((p) => ({
       bucket: String(p.bucket),
@@ -336,6 +353,7 @@ export default function Analytics() {
       cases_pred: Number(p.cases_pred || 0),
     }));
 
+    // “ponte” no último ponto histórico para ligar a linha pontilhada
     if (hist.length && pred.length) {
       pred.unshift({
         bucket: hist[hist.length - 1].bucket,
@@ -347,10 +365,14 @@ export default function Analytics() {
     return [...hist, ...pred];
   }, [trends, predTrends]);
 
-  const windowDays = kpi?.delta_base?.window_days;
-  const deltaTitle =   deltaMode === "yoy"
-    ? `Δ (janela móvel ${windowDays || 0}d) vs ano passado`
-    : `Δ (últimos ${windowDays || 0}d) vs período anterior`;
+  /* ---------------- KPI Δ TEXT ---------------- */
+
+  const windowDays = kpi?.delta_base?.window_days ?? 0;
+
+  const deltaTitle =
+    deltaMode === "yoy"
+      ? `Δ (janela móvel ${windowDays}d) vs ano passado`
+      : `Δ (últimos ${windowDays}d) vs período anterior`;
 
   const baseTotal = kpi?.delta_base?.base_total ?? 0;
   const prevTotal = kpi?.delta_base?.prev_total ?? 0;
@@ -365,8 +387,32 @@ export default function Analytics() {
           : fmtDelta(kpi.delta_pct);
 
   const deltaSub = kpi?.delta_base
-  ? `Janela: ${fmt(baseTotal)} (${kpi.delta_base.base_start} → ${kpi.delta_base.base_end}) | Base: ${fmt(prevTotal)} (${kpi.delta_base.prev_start} → ${kpi.delta_base.prev_end})`
-  : undefined;
+    ? `Janela: ${fmt(baseTotal)} (${kpi.delta_base.base_start} → ${kpi.delta_base.base_end}) | Base: ${fmt(prevTotal)} (${kpi.delta_base.prev_start} → ${kpi.delta_base.prev_end})`
+    : undefined;
+
+  /* ---------------- EXECUTIVE SCOPE (FIX DO “SP” QUANDO ALL/ALL) ----------------
+     Regra:
+     - Se uf !== all => líder não faz sentido (já está filtrado), então NÃO mostra.
+     - Se disease === all e uf === all => NÃO destaca “UF líder” (evita “SP” confuso).
+     - Mostra líder só quando houver algum recorte (doença específica OU uf específica).
+  */
+
+  const scopeLabelDisease = disease === "all" ? "Multidoença" : disease;
+  const scopeLabelUf = uf === "all" ? "Todas as UFs" : `UF: ${uf}`;
+
+  const leaderLine = useMemo(() => {
+    if (uf !== "all") return null; // já está filtrado, líder não agrega
+    if (disease === "all" && uf === "all") return null; // evita “SP” no ALL/ALL
+    if (!kpi?.top_uf) return null;
+
+    const share = kpi?.executive_summary?.top_share;
+    const shareTxt =
+      share === null || share === undefined ? "—" : `${share}%`;
+
+    return `UF líder no recorte: ${kpi.top_uf.uf} (${shareTxt} dos casos)`;
+  }, [uf, disease, kpi]);
+
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="p-6">
@@ -389,9 +435,7 @@ export default function Analytics() {
               >
                 <option value="all">Todas</option>
                 {diseases.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
+                  <option key={d} value={d}>{d}</option>
                 ))}
               </select>
             </div>
@@ -405,9 +449,7 @@ export default function Analytics() {
               >
                 <option value="all">Todas</option>
                 {ufs.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
+                  <option key={u} value={u}>{u}</option>
                 ))}
               </select>
             </div>
@@ -473,97 +515,60 @@ export default function Analytics() {
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-          <KpiCard
-            title="Casos no período"
-            value={fmt(kpi?.total_cases)}
-            loading={loadingKpi}
-          />
-          <KpiCard
-            title="UFs afetadas"
-            value={fmt(kpi?.uf_affected)}
-            loading={loadingKpi}
-          />
-          <KpiCard
-            title="Municípios afetados"
-            value={fmt(kpi?.cities_affected)}
-            loading={loadingKpi}
-          />
+          <KpiCard title="Casos no período" value={fmt(kpi?.total_cases)} loading={loadingKpi} />
+          <KpiCard title="UFs afetadas" value={fmt(kpi?.uf_affected)} loading={loadingKpi} />
+          <KpiCard title="Municípios afetados" value={fmt(kpi?.cities_affected)} loading={loadingKpi} />
           <KpiCard
             title={deltaTitle}
             value={deltaValue}
-            sub={
-              deltaSub ||
-              (kpi?.top_uf
-                ? `Top UF: ${kpi.top_uf.uf} (${fmt(kpi.top_uf.cases)})`
-                : undefined)
-            }
+            sub={deltaSub || (kpi?.top_uf ? `Top UF: ${kpi.top_uf.uf} (${fmt(kpi.top_uf.cases)})` : undefined)}
             loading={loadingKpi}
           />
         </div>
-          {kpi?.executive_summary && (
-            <div className="mt-6 rounded-2xl border border-gray-200 p-5 bg-gray-50">
-              <div className="text-sm text-gray-500 mb-3">
-                🧠 Insight Executivo
-              </div>
 
-              {/* Linha principal */}
-              <div className="flex flex-wrap items-center gap-6 text-sm">
+        {/* Insight Executivo */}
+        {kpi?.executive_summary && (
+          <div className="mt-6 rounded-2xl border border-gray-200 p-4 bg-gray-50">
+            <div className="text-sm text-gray-500">🧠 Insight Executivo</div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <div>
+                <span className="font-semibold">Tendência:</span>{" "}
+                {kpi.executive_summary.trend}
+              </div>
+              <div>
+                <span className="font-semibold">Risco:</span>{" "}
+                {kpi.executive_summary.badge} {kpi.executive_summary.risk_level}
+              </div>
+              <div>
+                <span className="font-semibold">Score:</span>{" "}
+                {kpi.executive_summary.risk_score}/100
+              </div>
+              {typeof kpi.executive_summary.top_share === "number" && (
                 <div>
-                  <strong>Tendência:</strong>{" "}
-                  {kpi.executive_summary.trend}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <strong>Risco:</strong>
-                  <span>{kpi.executive_summary.badge}</span>
-                  <span className="font-semibold">
-                    {kpi.executive_summary.risk_level}
-                  </span>
-                </div>
-
-                <div>
-                  <strong>Score:</strong>{" "}
-                  <span className="text-lg font-semibold">
-                    {kpi.executive_summary.risk_score}
-                  </span>
-                  <span className="text-gray-500">/100</span>
-                </div>
-              </div>
-
-              {/* Escopo */}
-              <div className="mt-3 text-xs text-gray-500">
-                Escopo do score:{" "}
-                <span className="font-semibold">
-                  {kpi.executive_summary.scope}
-                </span>{" "}
-                | Período:{" "}
-                <span className="font-semibold">
-                  {kpi.executive_summary.context?.period_start}
-                </span>
-                {" → "}
-                <span className="font-semibold">
-                  {kpi.executive_summary.context?.period_end}
-                </span>
-              </div>
-
-              {/* Drivers */}
-              {uf === "all" && typeof kpi.executive_summary.top_share === "number" && (
-                <div className="mt-2 text-xs text-gray-600">
-                  UF líder no período analisado:{" "}
-                  <strong>{kpi.top_uf?.uf}</strong>{" "}
-                  ({kpi.executive_summary.top_share}% dos casos totais)
+                  <span className="font-semibold">Concentração Top UF:</span>{" "}
+                  {kpi.executive_summary.top_share}%
                 </div>
               )}
-
-              {/* Insight textual */}
-              <div className="mt-4 text-sm text-gray-700">
-                {kpi.executive_summary.alert}
-              </div>
-              <div className="text-sm text-gray-700">
-                {kpi.executive_summary.recommendation}
-              </div>
             </div>
-          )}
+
+            <div className="mt-2 text-xs text-gray-600">
+              Escopo do score: {scopeLabelDisease} | {scopeLabelUf} | Período:{" "}
+              {start} → {end}
+            </div>
+
+            {leaderLine && (
+              <div className="mt-1 text-xs text-gray-600">{leaderLine}</div>
+            )}
+
+            <div className="mt-3 text-sm text-gray-700">
+              {kpi.executive_summary.alert}
+            </div>
+            <div className="text-sm text-gray-700">
+              {kpi.executive_summary.recommendation}
+            </div>
+          </div>
+        )}
 
         {errKpi && (
           <div className="mt-4 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
@@ -576,7 +581,9 @@ export default function Analytics() {
           {/* Comparativos (Bar) */}
           <div className="rounded-2xl border border-gray-200 p-4">
             <div className="text-sm text-gray-500">Comparativos</div>
-            <div className="mt-1 text-sm font-semibold text-gray-900">{compareTitle}</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">
+              {compareTitle}
+            </div>
 
             {errCompare && (
               <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
@@ -591,7 +598,10 @@ export default function Analytics() {
                 <div className="text-sm text-gray-500">Sem dados.</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={compareData} margin={{ top: 10, right: 10, bottom: 40, left: 10 }}>
+                  <BarChart
+                    data={compareData}
+                    margin={{ top: 10, right: 10, bottom: 40, left: 10 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
                       dataKey="short"
@@ -623,7 +633,9 @@ export default function Analytics() {
           {/* Tendências (Line) + Previsão (pontilhada) */}
           <div className="rounded-2xl border border-gray-200 p-4">
             <div className="text-sm text-gray-500">Tendências</div>
-            <div className="mt-1 text-sm font-semibold text-gray-900">Casos ao longo do tempo</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">
+              Casos ao longo do tempo
+            </div>
 
             {errTrends && (
               <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
@@ -635,17 +647,28 @@ export default function Analytics() {
               {loadingTrends ? (
                 <div className="text-sm text-gray-500">Carregando…</div>
               ) : trendsData.length === 0 ? (
-                <div className="text-sm text-gray-500">{errTrends ? "—" : "Sem dados."}</div>
+                <div className="text-sm text-gray-500">
+                  {errTrends ? "—" : "Sem dados."}
+                </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trendsData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+                  <LineChart
+                    data={trendsData}
+                    margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="bucket" hide />
                     <YAxis tickFormatter={(v) => fmt(v)} width={70} />
                     <RTooltip content={<ChartTooltip />} />
 
                     {/* histórico */}
-                    <Line type="monotone" dataKey="cases" dot={false} stroke="#2563eb" connectNulls />
+                    <Line
+                      type="monotone"
+                      dataKey="cases"
+                      dot={false}
+                      stroke="#2563eb"
+                      connectNulls
+                    />
 
                     {/* previsão (pontilhada) */}
                     <Line
@@ -671,7 +694,8 @@ export default function Analytics() {
         <div className="mt-6 text-xs text-gray-500">
           Filtros ativos: doença=<span className="font-semibold">{disease}</span>, uf=
           <span className="font-semibold">{uf}</span>, período=
-          <span className="font-semibold">{start}</span>→<span className="font-semibold">{end}</span>, gran=
+          <span className="font-semibold">{start}</span>→
+          <span className="font-semibold">{end}</span>, gran=
           <span className="font-semibold">{gran}</span>, Δ=
           <span className="font-semibold">{deltaMode}</span>
         </div>

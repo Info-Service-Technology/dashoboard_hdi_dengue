@@ -17,7 +17,8 @@ from src.routes.account import account_bp
 from src.routes.system import system_bp
 from src.routes.uploads import uploads_bp
 from src.routes.analytics import analytics_bp
-
+from src.routes.data import data_bp
+from src.routes.admin_users import admin_users_bp
 
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
@@ -31,6 +32,9 @@ app.register_blueprint(account_bp, url_prefix="/api")
 app.register_blueprint(system_bp, url_prefix="/api")
 app.register_blueprint(uploads_bp, url_prefix="/api")
 app.register_blueprint(analytics_bp, url_prefix="/api")
+app.register_blueprint(data_bp, url_prefix="/api")
+app.register_blueprint(admin_users_bp, url_prefix="/api")
+app.register_blueprint(predictions_bp, url_prefix="/api/predictions")
 
 
 # Configurações

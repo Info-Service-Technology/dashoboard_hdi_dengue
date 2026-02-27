@@ -8,17 +8,19 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer
+  ResponsiveContainer,
 } from "recharts";
 
 // ✅ axios local (não afeta o resto do app)
 const api = axios.create({
-  baseURL: "http://localhost:5000/api/predictions"
+  baseURL: "http://localhost:5000/api/predictions",
+  timeout: 20000,
 });
 
 // ✅ injeta token automaticamente em toda request desse módulo
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
+  const token =
+    localStorage.getItem("token") || localStorage.getItem("access_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -34,20 +36,27 @@ const Predictions = () => {
   const [disease, setDisease] = useState("");
   const [state, setState] = useState("");
 
+  const normalizeError = (e, fallback) =>
+    e?.response?.data?.msg ||
+    e?.response?.data?.message ||
+    e?.response?.data?.error ||
+    e?.message ||
+    fallback;
+
   // ✅ evita recriar array toda render
   const chartData = useMemo(() => {
     if (!forecast) return [];
 
     const hist = (forecast.historical_data || []).map((h) => ({
       date: h.date,
-      real: h.cases
+      real: Number(h.cases || 0),
     }));
 
     const pred = (forecast.forecast || []).map((f, i) => ({
       date: f.date,
-      predicted: f.predicted_cases,
-      low: forecast.confidence_interval?.[i]?.lower_bound,
-      high: forecast.confidence_interval?.[i]?.upper_bound
+      predicted: Number(f.predicted_cases || 0),
+      low: Number(forecast.confidence_interval?.[i]?.lower_bound ?? null),
+      high: Number(forecast.confidence_interval?.[i]?.upper_bound ?? null),
     }));
 
     return [...hist, ...pred];
@@ -68,20 +77,13 @@ const Predictions = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  const normalizeError = (e, fallback) =>
-    e?.response?.data?.msg ||
-    e?.response?.data?.message ||
-    e?.response?.data?.error ||
-    e?.message ||
-    fallback;
-
   const loadCatalogs = async () => {
     try {
       setError(null);
 
       const [dRes, sRes] = await Promise.all([
         api.get("/diseases"),
-        api.get("/states")
+        api.get("/states"),
       ]);
 
       const dList = Array.isArray(dRes.data?.diseases) ? dRes.data.diseases : [];
@@ -90,9 +92,9 @@ const Predictions = () => {
       setDiseases(dList);
       setStates(sList);
 
-      // ✅ garante default
-      if (!disease && dList.length) setDisease(dList[0]);
-      if (!state && sList.length) setState(sList[0]);
+      // ✅ garante default sem loop
+      setDisease((prev) => prev || (dList.length ? dList[0] : ""));
+      setState((prev) => prev || (sList.length ? sList[0] : ""));
     } catch (e) {
       setError(normalizeError(e, "Erro ao carregar catálogos"));
     }
@@ -101,8 +103,11 @@ const Predictions = () => {
   const loadForecast = async () => {
     try {
       setError(null);
+      setForecast(null);
+
+      // backend espera: { disease, months_ahead }
       const res = await api.post("/forecast", { disease, months_ahead: 6 });
-      setForecast(res.data);
+      setForecast(res.data || null);
     } catch (e) {
       setForecast(null);
       setError(normalizeError(e, "Erro ao carregar forecast"));
@@ -112,8 +117,11 @@ const Predictions = () => {
   const loadRisk = async () => {
     try {
       setError(null);
+      setRisk(null);
+
+      // backend espera: { state }
       const res = await api.post("/risk-analysis", { state });
-      setRisk(res.data);
+      setRisk(res.data || null);
     } catch (e) {
       setRisk(null);
       setError(normalizeError(e, "Erro ao carregar risco"));
@@ -125,7 +133,11 @@ const Predictions = () => {
       <h1 className="text-2xl font-bold">Análise Preditiva</h1>
 
       <div className="flex gap-4">
-        <select value={disease} onChange={(e) => setDisease(e.target.value)}>
+        <select
+          value={disease}
+          onChange={(e) => setDisease(e.target.value)}
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
+        >
           {diseases.map((d) => (
             <option key={d} value={d}>
               {d}
@@ -133,7 +145,11 @@ const Predictions = () => {
           ))}
         </select>
 
-        <select value={state} onChange={(e) => setState(e.target.value)}>
+        <select
+          value={state}
+          onChange={(e) => setState(e.target.value)}
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
+        >
           {states.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -156,19 +172,24 @@ const Predictions = () => {
             <YAxis />
             <Tooltip />
             <Legend />
-            <Line dataKey="real" stroke="#2563eb" name="Casos Reais" />
-            <Line dataKey="predicted" stroke="#dc2626" name="Previstos" />
+
+            <Line dataKey="real" stroke="#2563eb" name="Casos Reais" dot={false} />
+            <Line dataKey="predicted" stroke="#dc2626" name="Previstos" dot={false} />
             <Line
               dataKey="high"
               stroke="#f59e0b"
               strokeDasharray="4 4"
               name="Limite superior"
+              dot={false}
+              connectNulls
             />
             <Line
               dataKey="low"
               stroke="#10b981"
               strokeDasharray="4 4"
               name="Limite inferior"
+              dot={false}
+              connectNulls
             />
           </LineChart>
         </ResponsiveContainer>
@@ -180,7 +201,7 @@ const Predictions = () => {
           <p>
             Nível: <strong>{risk.risk_level}</strong>
           </p>
-          <p>Score: {(risk.risk_score * 100).toFixed(1)}%</p>
+          <p>Score: {(Number(risk.risk_score || 0) * 100).toFixed(1)}%</p>
         </div>
       )}
     </div>
