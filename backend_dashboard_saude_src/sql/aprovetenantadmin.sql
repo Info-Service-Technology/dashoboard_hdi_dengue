@@ -1,0 +1,1 @@
+ALTER TABLE user ADD COLUMN is_approved TINYINT(1) DEFAULT 0;

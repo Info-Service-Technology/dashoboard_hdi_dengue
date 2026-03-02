@@ -4,7 +4,7 @@ import io
 from flask import Response
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func
 
 from src.models.user import db
@@ -12,6 +12,24 @@ from src.models.health_data import HealthCase, Municipality
 
 analytics_bp = Blueprint("analytics", __name__)
 
+def _tenant_scope():
+    """
+    Retorna (scope_type, scope_value) do JWT.
+    Defaults seguros: BR/all
+    """
+    claims = get_jwt() or {}
+    scope_type = (claims.get("tenant_scope_type") or "BR").strip().upper()
+    scope_value = (claims.get("tenant_scope_value") or "all").strip()
+
+    # Normalização
+    if scope_type == "BR":
+        scope_value = "all"
+    elif scope_type == "UF":
+        scope_value = scope_value.upper()
+    elif scope_type == "MUN":
+        scope_value = scope_value.strip()
+
+    return scope_type, scope_value
 
 def _parse_dates():
     """
@@ -37,10 +55,33 @@ def _base_query():
     Base da query:
     - Join HealthCase -> Municipality pelo IBGE (6 primeiros dígitos)
     - Filtros: disease, uf
+    - + ENFORCE tenant scope (BR/UF/MUN)
     """
     disease = (request.args.get("disease") or "all").strip()
     uf = (request.args.get("uf") or "all").strip()
     start_dt, end_dt = _parse_dates()
+
+    scope_type, scope_value = _tenant_scope()
+
+    # ----------------------------
+    # Guardrails de escopo
+    # ----------------------------
+    # Tenant UF: não pode pedir outra UF
+    if scope_type == "UF":
+        if uf.lower() != "all" and uf.upper() != scope_value:
+            # tentou acessar UF diferente
+            raise PermissionError("ACESSO NEGADO: você não pode acessar escopo de outra UF.")
+        # força o filtro
+        uf = scope_value
+
+    # Tenant MUN: não deve ter visão por UF all/outro; e sempre filtra por municipio
+    # (obs: aqui seu analytics não recebe municipio via query; então ele sempre será “amarrado” no município do tenant)
+    if scope_type == "MUN":
+        # se o frontend mandar uf diferente de all, ainda assim não faz sentido e pode confundir
+        if uf.lower() != "all":
+            # opcional: você pode permitir uf "RJ" se quiser, mas aqui vou ser estrito
+            raise PermissionError("ACESSO NEGADO: escopo é municipal. Remova filtro UF.")
+        # mantém uf="all" no label, mas filtra pelo municipio (abaixo)
 
     q = (
         db.session.query(HealthCase, Municipality)
@@ -52,11 +93,18 @@ def _base_query():
         .filter(Municipality.longitude.isnot(None))
     )
 
+    # Filtro doença
     if disease.lower() != "all":
         q = q.filter(func.lower(HealthCase.disease_name) == func.lower(disease))
 
+    # Filtro UF (já “forçado” quando tenant UF)
     if uf.lower() != "all":
         q = q.filter(func.upper(Municipality.uf) == uf.upper())
+
+    # Filtro município quando tenant MUN
+    if scope_type == "MUN":
+        # Municipality.id é string; compara 6 primeiros dígitos
+        q = q.filter(func.substr(Municipality.id, 1, 6) == scope_value)
 
     return q, disease, uf, start_dt, end_dt
 
@@ -299,6 +347,13 @@ def analytics_kpi():
                 "executive_summary": executive_summary,  # ✅ novo
             }
         ), 200
+    
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        print(f"❌ analytics_kpi: {e}")
+        return jsonify({"error": "Erro interno ao processar KPI"}), 500
+
 
     except Exception as e:
         print(f"❌ analytics_kpi: {e}")
@@ -337,7 +392,12 @@ def analytics_compare():
 
         data = [{"label": r.label, "cases": int(r.cases)} for r in rows]
         return jsonify(data), 200
-
+    
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        print(f"❌ analytics_kpi: {e}")
+        return jsonify({"error": "Erro interno ao processar KPI"}), 500
     except Exception as e:
         print(f"❌ analytics_compare: {e}")
         return jsonify({"error": "Erro interno ao processar comparativos"}), 500
@@ -378,6 +438,11 @@ def analytics_trends():
         data = [{"bucket": str(r.bucket), "cases": int(r.cases)} for r in rows]
         return jsonify(data), 200
 
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        print(f"❌ analytics_kpi: {e}")
+        return jsonify({"error": "Erro interno ao processar KPI"}), 500
     except Exception as e:
         print(f"❌ analytics_trends: {e}")
         return jsonify({"error": "Erro interno ao processar tendências"}), 500
@@ -507,6 +572,11 @@ def analytics_export_csv():
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        print(f"❌ analytics_kpi: {e}")
+        return jsonify({"error": "Erro interno ao processar KPI"}), 500
     except Exception as e:
         print(f"❌ analytics_export_csv: {e}")
         return jsonify({"error": "Erro interno ao exportar CSV"}), 500

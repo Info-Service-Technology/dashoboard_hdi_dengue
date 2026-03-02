@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
-
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from src.models.user import db, User
 from src.models.user_profile import UserProfile
 
@@ -10,6 +9,7 @@ account_bp = Blueprint("account_bp", __name__)
 @jwt_required()
 def get_me():
     user_id = get_jwt_identity()
+    claims = get_jwt() or {}
 
     user = User.query.get(user_id)
     if not user:
@@ -17,13 +17,18 @@ def get_me():
 
     profile = UserProfile.query.get(user_id)
     if not profile:
-        # Cria perfil default se não existir
         profile = UserProfile(user_id=user_id)
         db.session.add(profile)
         db.session.commit()
 
+    tenant = {
+        "slug": claims.get("tenant", "br"),
+        "scope_type": claims.get("tenant_scope_type", "BR"),
+        "scope_value": claims.get("tenant_scope_value", "all"),
+    }
+
     return jsonify({
-        "user": {
+        "user": user.to_dict() if hasattr(user, "to_dict") else {
             "id": user.id,
             "first_name": user.first_name,
             "last_name": user.last_name,
@@ -31,8 +36,10 @@ def get_me():
             "role": user.role,
             "is_active": getattr(user, "is_active", True),
         },
-        "profile": profile.to_dict()
+        "profile": profile.to_dict(),
+        "tenant": tenant,
     }), 200
+
 
 @account_bp.put("/account/me")
 @jwt_required()
@@ -62,7 +69,6 @@ def update_me():
     if "about" in payload:
         profile.about = str(payload["about"]) if payload["about"] else None
 
-    # Foto/tema (opcionais desde já)
     if "avatar_url" in payload:
         profile.avatar_url = str(payload["avatar_url"])[:255] if payload["avatar_url"] else None
     if "theme" in payload:
@@ -72,5 +78,4 @@ def update_me():
         profile.theme = theme
 
     db.session.commit()
-
     return jsonify({"success": True}), 200

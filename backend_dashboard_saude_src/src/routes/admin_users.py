@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
-
+from flask_cors import cross_origin
 from src.models.user import db, User
 
 admin_users_bp = Blueprint("admin_users", __name__)
@@ -104,6 +104,7 @@ def create_user():
 # PATCH /api/admin/users/<id>/status
 # -------------------------------------------------
 @admin_users_bp.route("/admin/users/<int:user_id>/status", methods=["PATCH"])
+@cross_origin(origins='http://localhost:5173', methods=['PATCH', 'OPTIONS'])
 @jwt_required()
 def set_user_status(user_id):
     _, err = _require_admin()

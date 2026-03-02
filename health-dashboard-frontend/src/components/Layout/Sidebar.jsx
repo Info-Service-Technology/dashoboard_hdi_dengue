@@ -100,9 +100,9 @@ const Sidebar = ({ isOpen, onClose }) => {
               </div>
               <div>
                 <h1 className="text-lg font-semibold text-gray-900">
-                  Dashboard Saúde
+                  HDI
                 </h1>
-                <p className="text-xs text-gray-500">Análise Preditiva</p>
+                <p className="text-xs text-gray-500">Plataforma preditiva</p>
               </div>
             </div>
           </div>

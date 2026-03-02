@@ -70,3 +70,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3MTc5OTc1OCwianRpIjoiODUzN2FkOWQtM2Y4YS00NzM4LWFhMzktNDgxOTI4MjczNGI3IiwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOjIsIm5iZiI6MTc3MTc5OTc1OCwiY3NyZiI6IjBlMzY2NWU2LTY2YjItNDk1ZS1iZjQzLTRlODE2ODU4Y2I1NSIsImV4cCI6MTc3MjQwNDU1OH0.VDlXvzFItprjQW48kfHff7jKdwvu5JZ-OAFDaTA9i-o'
 curl -s -H "Authorization: Bearer $TOKEN" \
 "http://localhost:5000/api/predictions/trends?disease=all&uf=all&start=2024-01-01&end=2026-02-26&gran=week&delta_mode=yoy&horizon=12" | head
+
+
+TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3MTc5OTc1OCwianRpIjoiODUzN2FkOWQtM2Y4YS00NzM4LWFhMzktNDgxOTI4MjczNGI3IiwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOjIsIm5iZiI6MTc3MTc5OTc1OCwiY3NyZiI6IjBlMzY2NWU2LTY2YjItNDk1ZS1iZjQzLTRlODE2ODU4Y2I1NSIsImV4cCI6MTc3MjQwNDU1OH0.VDlXvzFItprjQW48kfHff7jKdwvu5JZ-OAFDaTA9i-o'
+curl -s -H "Authorization: Bearer $TOKEN" \
+"http://localhost:5000/api/kpis/dengue?municipio=330270&ano=2024&granularidade=mensal" | jq '.data[:3]'
+
+
+TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3MTc5OTc1OCwianRpIjoiODUzN2FkOWQtM2Y4YS00NzM4LWFhMzktNDgxOTI4MjczNGI3IiwidHlwZSI6ImFjY2VzcyIsInVzZXJfaWQiOjIsIm5iZiI6MTc3MTc5OTc1OCwiY3NyZiI6IjBlMzY2NWU2LTY2YjItNDk1ZS1iZjQzLTRlODE2ODU4Y2I1NSIsImV4cCI6MTc3MjQwNDU1OH0.VDlXvzFItprjQW48kfHff7jKdwvu5JZ-OAFDaTA9i-o'
+curl -s -H "Authorization: Bearer $TOKEN" \
+"http://localhost:5000/api/kpis/dengue?municipio=330270&ano=2024&granularidade=semanal" | jq '.data[:5]'

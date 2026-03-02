@@ -17,4 +17,13 @@ export default defineConfig({
       '5173-iza1stnqhyn0nc0f25z37-06379296.manusvm.computer'
     ]
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
 })
