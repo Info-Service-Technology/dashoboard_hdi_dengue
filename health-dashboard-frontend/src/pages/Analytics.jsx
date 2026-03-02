@@ -1,4 +1,3 @@
-// src/pages/Analytics.jsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
@@ -28,9 +27,8 @@ function fmtDelta(delta) {
   if (Number.isNaN(v)) return "—";
   const abs = Math.abs(v).toFixed(2);
   if (v > 0) return `+${abs}%`;
-  return `${abs}%`;  // Remove o "if (v < 0)" e usa abs sempre para v <= 0
+  return `${abs}%`;
 }
-
 
 function isoDate(d) {
   const pad = (x) => String(x).padStart(2, "0");
@@ -63,8 +61,12 @@ function ChartTooltip({ active, payload, label }) {
 /* ---------------- PAGE ---------------- */
 
 export default function Analytics() {
-  const { token } = useAuth();
+  const { token, tenant } = useAuth();
   const apiBase = "http://localhost:5000/api";
+
+  // tenant scope
+  const scopeType = (tenant?.scope_type || "BR").toUpperCase(); // BR|UF|MUN
+  const scopeValue = String(tenant?.scope_value || "all");      // all | RJ | 330270
 
   /* ---------------- COLORS ---------------- */
 
@@ -96,15 +98,26 @@ export default function Analytics() {
   const [disease, setDisease] = useState("all");
   const [uf, setUf] = useState("all");
   const [gran, setGran] = useState("week");
-  const [deltaMode, setDeltaMode] = useState("yoy"); // yoy|pop
+  const [deltaMode, setDeltaMode] = useState("yoy");
 
-  // default: 2 anos
   const [start, setStart] = useState(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 2);
     return isoDate(d);
   });
   const [end, setEnd] = useState(() => isoDate(new Date()));
+
+  // ✅ trava filtros conforme tenant
+  useEffect(() => {
+    if (!tenant) return;
+
+    if (scopeType === "UF") {
+      setUf(scopeValue.toUpperCase());
+    }
+    if (scopeType === "MUN") {
+      setUf("all"); // não faz sentido escolher UF num escopo municipal
+    }
+  }, [tenant, scopeType, scopeValue]);
 
   /* ---------------- DATA ---------------- */
 
@@ -167,6 +180,11 @@ export default function Analytics() {
         setKpi(null);
         return;
       }
+      if (res.status === 403) {
+        setErrKpi(body?.error || "ACESSO NEGADO.");
+        setKpi(null);
+        return;
+      }
       if (!res.ok) {
         setErrKpi(body?.error || `Erro ao carregar KPI (HTTP ${res.status}).`);
         setKpi(null);
@@ -193,6 +211,11 @@ export default function Analytics() {
         setCompare([]);
         return;
       }
+      if (res.status === 403) {
+        setErrCompare(body?.error || "ACESSO NEGADO.");
+        setCompare([]);
+        return;
+      }
       if (!res.ok) {
         setErrCompare(body?.error || `Erro ao carregar comparativos (HTTP ${res.status}).`);
         setCompare([]);
@@ -216,6 +239,11 @@ export default function Analytics() {
       const { res, body } = await fetchJson(`${apiBase}/analytics/trends?${qs}`);
       if (res.status === 401) {
         setErrTrends("Não autorizado. Faça login novamente.");
+        setTrends([]);
+        return;
+      }
+      if (res.status === 403) {
+        setErrTrends(body?.error || "ACESSO NEGADO.");
         setTrends([]);
         return;
       }
@@ -254,8 +282,6 @@ export default function Analytics() {
       setLoadingPred(false);
     }
   }, [token, apiBase, qs, authHeaders]);
-
-  /* ---------------- DEBOUNCE RELOAD ---------------- */
 
   useEffect(() => {
     if (!token) return;
@@ -333,13 +359,10 @@ export default function Analytics() {
       label: d.label,
       cases: Number(d.cases || 0),
       short:
-        String(d.label).length > 10
-          ? String(d.label).slice(0, 10) + "…"
-          : String(d.label),
+        String(d.label).length > 10 ? String(d.label).slice(0, 10) + "…" : String(d.label),
     }));
   }, [compare]);
 
-  // histórico + previsão (sem TDZ)
   const trendsData = useMemo(() => {
     const hist = trends.map((p) => ({
       bucket: String(p.bucket),
@@ -353,7 +376,6 @@ export default function Analytics() {
       cases_pred: Number(p.cases_pred || 0),
     }));
 
-    // “ponte” no último ponto histórico para ligar a linha pontilhada
     if (hist.length && pred.length) {
       pred.unshift({
         bucket: hist[hist.length - 1].bucket,
@@ -390,29 +412,22 @@ export default function Analytics() {
     ? `Janela: ${fmt(baseTotal)} (${kpi.delta_base.base_start} → ${kpi.delta_base.base_end}) | Base: ${fmt(prevTotal)} (${kpi.delta_base.prev_start} → ${kpi.delta_base.prev_end})`
     : undefined;
 
-  /* ---------------- EXECUTIVE SCOPE (FIX DO “SP” QUANDO ALL/ALL) ----------------
-     Regra:
-     - Se uf !== all => líder não faz sentido (já está filtrado), então NÃO mostra.
-     - Se disease === all e uf === all => NÃO destaca “UF líder” (evita “SP” confuso).
-     - Mostra líder só quando houver algum recorte (doença específica OU uf específica).
-  */
-
   const scopeLabelDisease = disease === "all" ? "Multidoença" : disease;
   const scopeLabelUf = uf === "all" ? "Todas as UFs" : `UF: ${uf}`;
 
   const leaderLine = useMemo(() => {
-    if (uf !== "all") return null; // já está filtrado, líder não agrega
-    if (disease === "all" && uf === "all") return null; // evita “SP” no ALL/ALL
+    if (uf !== "all") return null;
+    if (disease === "all" && uf === "all") return null;
     if (!kpi?.top_uf) return null;
 
     const share = kpi?.executive_summary?.top_share;
-    const shareTxt =
-      share === null || share === undefined ? "—" : `${share}%`;
+    const shareTxt = share === null || share === undefined ? "—" : `${share}%`;
 
     return `UF líder no recorte: ${kpi.top_uf.uf} (${shareTxt} dos casos)`;
   }, [uf, disease, kpi]);
 
-  /* ---------------- UI ---------------- */
+  // lock UF dropdown
+  const ufDisabled = scopeType === "UF" || scopeType === "MUN";
 
   return (
     <div className="p-6">
@@ -420,9 +435,13 @@ export default function Analytics() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Análises</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Gráficos, estatísticas e indicadores.
-            </p>
+            <p className="text-sm text-gray-500 mt-1">Gráficos, estatísticas e indicadores.</p>
+            {tenant?.slug && (
+              <div className="mt-1 text-xs text-gray-500">
+                Tenant: <span className="font-semibold">{tenant.slug}</span> | Scope:{" "}
+                <span className="font-semibold">{scopeType}:{scopeValue}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
@@ -445,7 +464,9 @@ export default function Analytics() {
               <select
                 value={uf}
                 onChange={(e) => setUf(e.target.value)}
-                className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1"
+                disabled={ufDisabled}
+                className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-60"
+                title={ufDisabled ? "UF travada pelo escopo do tenant." : undefined}
               >
                 <option value="all">Todas</option>
                 {ufs.map((u) => (
@@ -513,7 +534,6 @@ export default function Analytics() {
           </div>
         </div>
 
-        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
           <KpiCard title="Casos no período" value={fmt(kpi?.total_cases)} loading={loadingKpi} />
           <KpiCard title="UFs afetadas" value={fmt(kpi?.uf_affected)} loading={loadingKpi} />
@@ -526,23 +546,20 @@ export default function Analytics() {
           />
         </div>
 
-        {/* Insight Executivo */}
         {kpi?.executive_summary && (
           <div className="mt-6 rounded-2xl border border-gray-200 p-4 bg-gray-50">
             <div className="text-sm text-gray-500">🧠 Insight Executivo</div>
 
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
               <div>
-                <span className="font-semibold">Tendência:</span>{" "}
-                {kpi.executive_summary.trend}
+                <span className="font-semibold">Tendência:</span> {kpi.executive_summary.trend}
               </div>
               <div>
-                <span className="font-semibold">Risco:</span>{" "}
-                {kpi.executive_summary.badge} {kpi.executive_summary.risk_level}
+                <span className="font-semibold">Risco:</span> {kpi.executive_summary.badge}{" "}
+                {kpi.executive_summary.risk_level}
               </div>
               <div>
-                <span className="font-semibold">Score:</span>{" "}
-                {kpi.executive_summary.risk_score}/100
+                <span className="font-semibold">Score:</span> {kpi.executive_summary.risk_score}/100
               </div>
               {typeof kpi.executive_summary.top_share === "number" && (
                 <div>
@@ -553,20 +570,13 @@ export default function Analytics() {
             </div>
 
             <div className="mt-2 text-xs text-gray-600">
-              Escopo do score: {scopeLabelDisease} | {scopeLabelUf} | Período:{" "}
-              {start} → {end}
+              Escopo do score: {scopeLabelDisease} | {scopeLabelUf} | Período: {start} → {end}
             </div>
 
-            {leaderLine && (
-              <div className="mt-1 text-xs text-gray-600">{leaderLine}</div>
-            )}
+            {leaderLine && <div className="mt-1 text-xs text-gray-600">{leaderLine}</div>}
 
-            <div className="mt-3 text-sm text-gray-700">
-              {kpi.executive_summary.alert}
-            </div>
-            <div className="text-sm text-gray-700">
-              {kpi.executive_summary.recommendation}
-            </div>
+            <div className="mt-3 text-sm text-gray-700">{kpi.executive_summary.alert}</div>
+            <div className="text-sm text-gray-700">{kpi.executive_summary.recommendation}</div>
           </div>
         )}
 
@@ -576,14 +586,10 @@ export default function Analytics() {
           </div>
         )}
 
-        {/* Gráficos */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
-          {/* Comparativos (Bar) */}
           <div className="rounded-2xl border border-gray-200 p-4">
             <div className="text-sm text-gray-500">Comparativos</div>
-            <div className="mt-1 text-sm font-semibold text-gray-900">
-              {compareTitle}
-            </div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">{compareTitle}</div>
 
             {errCompare && (
               <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
@@ -598,26 +604,14 @@ export default function Analytics() {
                 <div className="text-sm text-gray-500">Sem dados.</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={compareData}
-                    margin={{ top: 10, right: 10, bottom: 40, left: 10 }}
-                  >
+                  <BarChart data={compareData} margin={{ top: 10, right: 10, bottom: 40, left: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="short"
-                      interval={0}
-                      angle={-25}
-                      textAnchor="end"
-                      height={60}
-                    />
+                    <XAxis dataKey="short" interval={0} angle={-25} textAnchor="end" height={60} />
                     <YAxis tickFormatter={(v) => fmt(v)} width={70} />
                     <RTooltip content={<ChartTooltip />} />
                     <Bar dataKey="cases">
                       {compareData.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={uf === "all" ? ufColor(entry.label) : "#2563eb"}
-                        />
+                        <Cell key={`cell-${index}`} fill={uf === "all" ? ufColor(entry.label) : "#2563eb"} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -626,16 +620,13 @@ export default function Analytics() {
             </div>
 
             <div className="mt-2 text-xs text-gray-500">
-              Dica: selecione uma UF para ver os top municípios.
+              Dica: selecione uma UF (se permitido pelo tenant) para ver os top municípios.
             </div>
           </div>
 
-          {/* Tendências (Line) + Previsão (pontilhada) */}
           <div className="rounded-2xl border border-gray-200 p-4">
             <div className="text-sm text-gray-500">Tendências</div>
-            <div className="mt-1 text-sm font-semibold text-gray-900">
-              Casos ao longo do tempo
-            </div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">Casos ao longo do tempo</div>
 
             {errTrends && (
               <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
@@ -647,38 +638,16 @@ export default function Analytics() {
               {loadingTrends ? (
                 <div className="text-sm text-gray-500">Carregando…</div>
               ) : trendsData.length === 0 ? (
-                <div className="text-sm text-gray-500">
-                  {errTrends ? "—" : "Sem dados."}
-                </div>
+                <div className="text-sm text-gray-500">{errTrends ? "—" : "Sem dados."}</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={trendsData}
-                    margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
-                  >
+                  <LineChart data={trendsData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="bucket" hide />
                     <YAxis tickFormatter={(v) => fmt(v)} width={70} />
                     <RTooltip content={<ChartTooltip />} />
-
-                    {/* histórico */}
-                    <Line
-                      type="monotone"
-                      dataKey="cases"
-                      dot={false}
-                      stroke="#2563eb"
-                      connectNulls
-                    />
-
-                    {/* previsão (pontilhada) */}
-                    <Line
-                      type="monotone"
-                      dataKey="cases_pred"
-                      dot={false}
-                      stroke="#2563eb"
-                      strokeDasharray="6 6"
-                      connectNulls
-                    />
+                    <Line type="monotone" dataKey="cases" dot={false} stroke="#2563eb" connectNulls />
+                    <Line type="monotone" dataKey="cases_pred" dot={false} stroke="#2563eb" strokeDasharray="6 6" connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}

@@ -7,6 +7,7 @@ from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS, cross_origin
 from flask_jwt_extended import JWTManager, jwt_required # coloquei jwt_required para testar se estava funcionando
 from src.models.user import db, User
+from src.models.tenant import Tenant, UserTenant
 from src.routes.user import user_bp
 from src.routes.auth import auth_bp
 from src.routes.health_data import health_data_bp
@@ -19,6 +20,8 @@ from src.routes.uploads import uploads_bp
 from src.routes.analytics import analytics_bp
 from src.routes.data import data_bp
 from src.routes.admin_users import admin_users_bp
+from src.routes.kpis import kpis_bp
+
 
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
@@ -35,7 +38,7 @@ app.register_blueprint(analytics_bp, url_prefix="/api")
 app.register_blueprint(data_bp, url_prefix="/api")
 app.register_blueprint(admin_users_bp, url_prefix="/api")
 app.register_blueprint(predictions_bp, url_prefix="/api/predictions")
-
+app.register_blueprint(kpis_bp, url_prefix="/api")
 
 # Configurações
 app.config['SECRET_KEY'] = 'health-dashboard-secret-key-2025'
@@ -52,7 +55,7 @@ CORS(app,
      origins=["http://localhost:5173"],
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"])
 
 
 # JWT Manager
@@ -61,6 +64,7 @@ jwt = JWTManager(app)
 # Configuração do banco de dados - usando SQLite por enquanto, pode ser migrado para MySQL
 #app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"
 app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:123456@172.22.1.2:3306/dashboard_saude"
+#app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:123456@172.22.1.2:3306/marica_datalake"
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -68,6 +72,29 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 with app.app_context():
     db.create_all()
+    # 1) garante tenant BR
+    br = Tenant.query.filter_by(slug="br").first()
+    if not br:
+        br = Tenant(slug="br", name="Brasil (Default)", scope_type="BR", scope_value="all", is_active=True)
+        db.session.add(br)
+        db.session.commit()
+        print("Tenant 'br' criado.")
+
+    # 2) garante admin
+    user = User.query.filter_by(email='admin@example.com').first()
+    if not user:
+        user = User(first_name='Admin', last_name='User', email='admin@example.com', role='admin')
+        user.set_password('admin')
+        db.session.add(user)
+        db.session.commit()
+        print('Usuário admin padrão criado.')
+
+    # 3) vincula admin ao tenant BR
+    link = UserTenant.query.filter_by(user_id=user.id, tenant_id=br.id).first()
+    if not link:
+        db.session.add(UserTenant(user_id=user.id, tenant_id=br.id))
+        db.session.commit()
+        print("Admin vinculado ao tenant 'br'.")
 
 
 # Rota de teste para verificar se a API está funcionando
@@ -77,7 +104,7 @@ def test():
 
 @app.route('/', defaults={'path': ''}) 
 @app.route('/<path:path>')
-@jwt_required() # coloquei jwt_required para testar se estava funcionando
+#@jwt_required() # coloquei jwt_required para testar se estava funcionando
 def serve(path):
     static_folder_path = app.static_folder
     if static_folder_path is None:

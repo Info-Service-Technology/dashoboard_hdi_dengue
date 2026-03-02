@@ -1,0 +1,1 @@
+ALTER TABLE user_tenants ADD COLUMN role VARCHAR(20) DEFAULT 'viewer';

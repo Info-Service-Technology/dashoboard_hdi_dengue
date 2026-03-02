@@ -135,8 +135,8 @@ const Dashboard = () => {
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard de Análise Preditiva</h1>
-          <p className="text-gray-600">Bem-vindo, {user?.first_name}</p>
+          <h1 className="text-2xl font-bold">Plataforma de Saúde - Health Data Insights</h1>
+          <p className="text-gray-600">Bem-vindo, {user?.first_name} {user?.last_name}</p>
         </div>
 
         <div className="flex gap-3">
@@ -162,6 +162,9 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent className="text-2xl font-bold">
             {dashboardData.total_cases}
+            <p className="text-xs text-muted-foreground">
+              Brasil
+            </p>
           </CardContent>
         </Card>
 
@@ -195,6 +198,9 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent className="text-2xl font-bold">
             {Array.isArray(dashboardData.cases_by_disease) ? dashboardData.cases_by_disease.length : 0}
+            <p className="text-xs text-muted-foreground">
+              Brasil
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -277,7 +283,7 @@ const Dashboard = () => {
             </ResponsiveContainer>
           )}
           <p className="mt-2 text-xs text-muted-foreground">
-            * Mostrando Top 10 UFs por total (somando todas as doenças).
+            * Brasil - Mostrando Top 10 UFs por total (somando todas as doenças).
           </p>
         </CardContent>
       </Card>
