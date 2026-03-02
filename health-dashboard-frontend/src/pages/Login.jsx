@@ -1,3 +1,4 @@
+// src/pages/Login.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
@@ -10,16 +11,12 @@ import { Eye, EyeOff, Activity } from "lucide-react";
 
 const API_BASE = "http://localhost:5000/api";
 
-const isValidEmail = (v) => {
-  const s = String(v || "").trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-};
+const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 
-export default function Login() {
+const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // ✅ TENANT (somente 1 state)
   const [tenants, setTenants] = useState([{ slug: "br", name: "Brasil" }]);
   const [tenantSlug, setTenantSlug] = useState("br");
   const [loadingTenants, setLoadingTenants] = useState(false);
@@ -31,9 +28,7 @@ export default function Login() {
   const { login, token } = useAuth();
   const navigate = useNavigate();
 
-  // evita race condition
   const reqIdRef = useRef(0);
-
   const canQueryTenants = useMemo(() => isValidEmail(email), [email]);
 
   useEffect(() => {
@@ -50,28 +45,22 @@ export default function Login() {
     }
 
     const id = ++reqIdRef.current;
-
     const t = setTimeout(async () => {
       setLoadingTenants(true);
       try {
-        const url = `${API_BASE}/auth/tenants?email=${encodeURIComponent(
-          email.trim().toLowerCase()
-        )}`;
+        const url = `${API_BASE}/auth/tenants?email=${encodeURIComponent(email.trim().toLowerCase())}`;
         const res = await fetch(url);
         const body = await res.json();
 
         if (id !== reqIdRef.current) return;
 
         const list = Array.isArray(body) ? body : [];
-        // sempre inclui Brasil como default
-        const merged = [{ slug: "br", name: "Brasil" }, ...list.filter((x) => x?.slug && x.slug !== "br")];
+        const normalized = list.length ? list : [{ slug: "br", name: "Brasil" }];
 
-        setTenants(merged);
+        setTenants(normalized);
 
-        // se tenant atual não existir, volta pro br
-        if (!merged.some((x) => x.slug === tenantSlug)) {
-          setTenantSlug("br");
-        }
+        const hasBr = normalized.some((x) => (x?.slug || "").toLowerCase() === "br");
+        setTenantSlug(hasBr ? "br" : (normalized[0].slug || "br"));
       } catch (e) {
         console.error(e);
         if (id !== reqIdRef.current) return;
@@ -83,7 +72,6 @@ export default function Login() {
     }, 350);
 
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email, canQueryTenants]);
 
   const handleSubmit = async (e) => {
@@ -91,9 +79,14 @@ export default function Login() {
     setError("");
     setLoading(true);
 
-    const chosenTenant = String(tenantSlug || "br").trim().toLowerCase();
+    // se email é válido e tenants vier vazio (usuário sem vínculo), bloqueia
+    if (canQueryTenants && (!tenants || tenants.length === 0)) {
+      setError("Nenhum tenant disponível para este usuário. Solicite acesso ao administrador.");
+      setLoading(false);
+      return;
+    }
 
-    const result = await login(email.trim().toLowerCase(), password, chosenTenant);
+    const result = await login(email.trim().toLowerCase(), password, tenantSlug);
 
     if (result.success) navigate("/dashboard");
     else setError(result.error);
@@ -104,7 +97,6 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6">
-        {/* Header */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center space-x-2">
             <Activity className="h-8 w-8 text-blue-600" />
@@ -116,7 +108,7 @@ export default function Login() {
         <Card>
           <CardHeader>
             <CardTitle>Entrar na Plataforma</CardTitle>
-            <CardDescription>Acesse o dashboard com escopo autorizado</CardDescription>
+            <CardDescription>Acesse o dashboard no escopo permitido</CardDescription>
           </CardHeader>
 
           <CardContent>
@@ -127,7 +119,6 @@ export default function Login() {
                 </Alert>
               )}
 
-              {/* Email */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -141,7 +132,6 @@ export default function Login() {
                 {loadingTenants && <div className="text-xs text-gray-500">Carregando tenants…</div>}
               </div>
 
-              {/* Tenant */}
               <div className="space-y-2">
                 <Label htmlFor="tenant">Tenant (escopo)</Label>
                 <select
@@ -159,11 +149,10 @@ export default function Login() {
                   ))}
                 </select>
                 <div className="text-xs text-gray-500">
-                  Selecione o escopo permitido para seu usuário.
+                  {canQueryTenants ? "Selecione o escopo permitido para seu usuário." : "Digite seu email para habilitar."}
                 </div>
               </div>
 
-              {/* Password */}
               <div className="space-y-2">
                 <Label htmlFor="password">Senha</Label>
                 <div className="relative">
@@ -187,7 +176,7 @@ export default function Login() {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={loading}>
+              <Button type="submit" className="w-full" disabled={loading || (canQueryTenants && loadingTenants)}>
                 {loading ? "Entrando..." : "Entrar"}
               </Button>
             </form>
@@ -204,10 +193,12 @@ export default function Login() {
         </Card>
 
         <div className="text-center text-xs text-gray-500">
-          <p>Plataforma Inteligente de Análise em Saúde</p>
-          <p>Dados baseados no SINAN/DATASUS</p>
+          <p>Plataforma Inteligente de Análise Preditiva em Saúde</p>
+          <p>Dados baseados no SINAN / DATASUS</p>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Login;

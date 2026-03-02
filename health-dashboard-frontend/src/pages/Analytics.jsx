@@ -14,6 +14,7 @@ import {
   Cell,
 } from "recharts";
 
+
 /* ---------------- UTIL ---------------- */
 
 function fmt(n) {
@@ -61,12 +62,15 @@ function ChartTooltip({ active, payload, label }) {
 /* ---------------- PAGE ---------------- */
 
 export default function Analytics() {
-  const { token, tenant } = useAuth();
+  const { token, tenantScope } = useAuth();
+
+
   const apiBase = "http://localhost:5000/api";
 
   // tenant scope
-  const scopeType = (tenant?.scope_type || "BR").toUpperCase(); // BR|UF|MUN
+  const scopeType = (tenantScope?.scope_type || "BR").toUpperCase(); // BR|UF|MUN
   const scopeValue = String(tenant?.scope_value || "all");      // all | RJ | 330270
+  
 
   /* ---------------- COLORS ---------------- */
 
@@ -117,7 +121,8 @@ export default function Analytics() {
     if (scopeType === "MUN") {
       setUf("all"); // não faz sentido escolher UF num escopo municipal
     }
-  }, [tenant, scopeType, scopeValue]);
+    if (scopeType === "MUN" && uf !== "all") setUf("all");
+  }, [tenant, scopeType, scopeValue, uf]);
 
   /* ---------------- DATA ---------------- */
 
@@ -458,22 +463,24 @@ export default function Analytics() {
                 ))}
               </select>
             </div>
+            {scopeType !== "MUN" && (    
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-gray-600">UF</label>
+                  <select
+                    value={uf}
+                    onChange={(e) => setUf(e.target.value)}
+                    disabled={ufDisabled}
+                    className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-60"
+                    title={ufDisabled ? "UF travada pelo escopo do tenant." : undefined}
+                  >
+                    <option value="all">Todas</option>
+                    {ufs.map((u) => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </select>
+                </div>
+            )}
 
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-600">UF</label>
-              <select
-                value={uf}
-                onChange={(e) => setUf(e.target.value)}
-                disabled={ufDisabled}
-                className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-60"
-                title={ufDisabled ? "UF travada pelo escopo do tenant." : undefined}
-              >
-                <option value="all">Todas</option>
-                {ufs.map((u) => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
-              </select>
-            </div>
 
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-gray-600">Início</label>
