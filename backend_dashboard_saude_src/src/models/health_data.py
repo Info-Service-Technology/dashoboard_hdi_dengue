@@ -7,6 +7,7 @@ class HealthCase(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     
+    
     # Identificação do caso
     tp_not = db.Column(db.String(10))  # Tipo de notificação
     id_agravo = db.Column(db.String(10), nullable=False)  # Código do agravo (A90, A92.0, A379, A080, A928)
@@ -31,6 +32,7 @@ class HealthCase(db.Model):
     # Localização
     sg_uf_not = db.Column(db.String(2))  # UF de notificação
     id_municip = db.Column(db.String(10)) # Município
+    id_municip = db.Column(db.String(7), index=True, nullable=True)
     id_regiona = db.Column(db.String(10)) # Região
     id_unidade = db.Column(db.String(20)) # Unidade de saúde
     

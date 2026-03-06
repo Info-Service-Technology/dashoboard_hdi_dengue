@@ -16,3 +16,5 @@ export default function AdminUsersPage() {
     </div>
   );
 }
+// src/pages/admin/AdminUsersPage.jsx
+export { default } from "./Users";

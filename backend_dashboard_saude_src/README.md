@@ -1,8 +1,8 @@
-# Dashboard de Análise Preditiva em Saúde
+# Plataforma de Análise Preditiva em Saúde
 
 ## Descrição do Projeto
 
-Este projeto consiste em um **Dashboard de Análise Preditiva em Saúde** focado em doenças brasileiras (Dengue, Chikungunya, Coqueluche, Zika e Rotavírus). O objetivo é fornecer uma plataforma robusta para visualização e análise de dados epidemiológicos, com um sistema de autenticação de usuários para diferentes níveis de acesso.
+Este projeto consiste em um **Plataforma de Análise Preditiva em Saúde** focado em doenças brasileiras (Dengue, Chikungunya, Coqueluche, Zika e Rotavírus). O objetivo é fornecer uma plataforma robusta para visualização e análise de dados epidemiológicos, com um sistema de autenticação de usuários para diferentes níveis de acesso.
 
 O backend é construído com **Flask** e **SQLAlchemy**, oferecendo uma API RESTful segura com autenticação **JWT**. O frontend é um dashboard moderno desenvolvido em **React** com **Vite**, utilizando **Tailwind CSS** e a biblioteca de componentes **shadcn/ui**, com design inspirado no **Material Dashboard React**.
 

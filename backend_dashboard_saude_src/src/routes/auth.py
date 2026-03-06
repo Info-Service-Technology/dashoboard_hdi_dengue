@@ -3,15 +3,14 @@ from datetime import timedelta
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
-from flask_cors import cross_origin
+
 from src.models.user import User, db
 from src.models.tenant import Tenant, UserTenant
-
 
 auth_bp = Blueprint("auth", __name__)
 
 
-def _get_tenant_or_403(user_id: int, tenant_slug: str):
+def _get_tenant_or_error(user_id: int, tenant_slug: str):
     """
     Resolve tenant por slug e valida vínculo user<->tenant.
     Retorna (tenant, None) se OK, ou (None, (payload, status)) se erro.
@@ -24,7 +23,8 @@ def _get_tenant_or_403(user_id: int, tenant_slug: str):
         .first()
     )
     if not tenant:
-        return None, ({"error": "Tenant inválido ou inativo"}, 403)
+        # tenant não existe / inativo -> 400 (request inválido)
+        return None, ({"error": "Tenant inválido ou inativo"}, 400)
 
     link = (
         db.session.query(UserTenant)
@@ -32,6 +32,7 @@ def _get_tenant_or_403(user_id: int, tenant_slug: str):
         .first()
     )
     if not link:
+        # tenant existe, mas usuário não pode -> 403
         return None, (
             {"error": "ACESSO NEGADO: você não pode acessar escopo de outra cidade."},
             403,
@@ -40,15 +41,15 @@ def _get_tenant_or_403(user_id: int, tenant_slug: str):
     return tenant, None
 
 
-def _issue_token(user: User, tenant: Tenant):
+def _issue_token(user: User, tenant: Tenant) -> str:
     """
     Emite JWT com claims de tenant.
     """
     additional_claims = {
         "role": user.role,
         "tenant": tenant.slug,
-        "tenant_scope_type": tenant.scope_type,      # BR|UF|MUN
-        "tenant_scope_value": tenant.scope_value,    # all | RJ | 330270
+        "tenant_scope_type": tenant.scope_type,   # BR|UF|MUN
+        "tenant_scope_value": tenant.scope_value, # all | RJ | 330270
     }
 
     return create_access_token(
@@ -58,11 +59,16 @@ def _issue_token(user: User, tenant: Tenant):
     )
 
 
-def _ensure_default_tenant_br_for_user(user_id: int):
+def _ensure_default_tenant_br_for_user(user_id: int) -> None:
     """
     Garante vínculo no tenant 'br' se existir e se ainda não estiver vinculado.
+    (Não dá commit aqui; deixa quem chama decidir.)
     """
-    tenant_br = Tenant.query.filter(db.func.lower(Tenant.slug) == "br", Tenant.is_active == True).first()
+    tenant_br = (
+        Tenant.query.filter(db.func.lower(Tenant.slug) == "br")
+        .filter(Tenant.is_active == True)
+        .first()
+    )
     if not tenant_br:
         return
 
@@ -73,6 +79,16 @@ def _ensure_default_tenant_br_for_user(user_id: int):
     )
     if not exists:
         db.session.add(UserTenant(user_id=user_id, tenant_id=tenant_br.id))
+
+
+def _sanitize_role(role: str) -> str:
+    """
+    Evita que alguém se registre como admin via payload.
+    Ajuste conforme seus papéis reais.
+    """
+    role = (role or "guest").strip().lower()
+    allowed = {"guest", "admin"}  # ajuste se tiver mais
+    return role if role in allowed else "guest"
 
 
 @auth_bp.route("/register", methods=["POST"])
@@ -100,7 +116,7 @@ def register():
             first_name=data["first_name"].strip(),
             last_name=data["last_name"].strip(),
             email=email,
-            role=(data.get("role") or "guest"),
+            role=_sanitize_role(data.get("role")),
         )
         user.set_password(data["password"])
 
@@ -112,27 +128,35 @@ def register():
         db.session.commit()
 
         # emite token BR
-        tenant_br = Tenant.query.filter(db.func.lower(Tenant.slug) == "br", Tenant.is_active == True).first()
+        tenant_br = (
+            Tenant.query.filter(db.func.lower(Tenant.slug) == "br")
+            .filter(Tenant.is_active == True)
+            .first()
+        )
         if not tenant_br:
             # fallback seguro se não existir tenant br
-            return jsonify({
-                "message": "Usuário registrado com sucesso, mas tenant 'br' não está configurado.",
-                "user": user.to_dict(),
-            }), 201
+            return jsonify(
+                {
+                    "message": "Usuário registrado com sucesso, mas tenant 'br' não está configurado.",
+                    "user": user.to_dict(),
+                }
+            ), 201
 
         access_token = _issue_token(user, tenant_br)
 
-        return jsonify({
-            "message": "Usuário registrado com sucesso",
-            "access_token": access_token,
-            "user": user.to_dict(),
-            "tenant": {
-                "slug": tenant_br.slug,
-                "name": tenant_br.name,
-                "scope_type": tenant_br.scope_type,
-                "scope_value": tenant_br.scope_value,
-            },
-        }), 201
+        return jsonify(
+            {
+                "message": "Usuário registrado com sucesso",
+                "access_token": access_token,
+                "user": user.to_dict(),
+                "tenant": {
+                    "slug": tenant_br.slug,
+                    "name": tenant_br.name,
+                    "scope_type": tenant_br.scope_type,
+                    "scope_value": tenant_br.scope_value,
+                },
+            }
+        ), 201
 
     except Exception as e:
         db.session.rollback()
@@ -162,24 +186,26 @@ def login():
         if not getattr(user, "is_active", True):
             return jsonify({"error": "Usuário inativo"}), 401
 
-        tenant, err = _get_tenant_or_403(user.id, tenant_slug)
+        tenant, err = _get_tenant_or_error(user.id, tenant_slug)
         if err:
             payload, status = err
             return jsonify(payload), status
 
         access_token = _issue_token(user, tenant)
 
-        return jsonify({
-            "message": "Login realizado com sucesso",
-            "access_token": access_token,
-            "user": user.to_dict(),
-            "tenant": {
-                "slug": tenant.slug,
-                "name": tenant.name,
-                "scope_type": tenant.scope_type,
-                "scope_value": tenant.scope_value,
-            },
-        }), 200
+        return jsonify(
+            {
+                "message": "Login realizado com sucesso",
+                "access_token": access_token,
+                "user": user.to_dict(),
+                "tenant": {
+                    "slug": tenant.slug,
+                    "name": tenant.name,
+                    "scope_type": tenant.scope_type,
+                    "scope_value": tenant.scope_value,
+                },
+            }
+        ), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -228,10 +254,12 @@ def update_profile():
 
         db.session.commit()
 
-        return jsonify({
-            "message": "Perfil atualizado com sucesso",
-            "user": user.to_dict(),
-        }), 200
+        return jsonify(
+            {
+                "message": "Perfil atualizado com sucesso",
+                "user": user.to_dict(),
+            }
+        ), 200
 
     except Exception as e:
         db.session.rollback()
@@ -283,6 +311,7 @@ def list_user_tenants():
 
     user = User.query.filter(db.func.lower(User.email) == email).first()
     if not user:
+        # não vaza info demais
         return jsonify([]), 200
 
     rows = (
@@ -293,5 +322,4 @@ def list_user_tenants():
         .all()
     )
 
-    # ✅ retorno mínimo pro dropdown
     return jsonify([{"slug": t.slug, "name": t.name} for t in rows]), 200

@@ -1,4 +1,3 @@
-// src/pages/Data.jsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
@@ -14,11 +13,14 @@ function fmt(n) {
 }
 
 export default function Data() {
-  const { token } = useAuth();
+  const { token, tenant } = useAuth();
   const apiBase = "http://localhost:5000/api";
 
-  // filtros
-  const [disease, setDisease] = useState("all");
+  const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase();
+  const tenantScopeValue = String(tenant?.scope_value || "all");
+  const isPrefeitura = tenantScopeType === "MUN";
+
+  const [disease, setDisease] = useState(isPrefeitura ? "dengue" : "all");
   const [uf, setUf] = useState("all");
   const [q, setQ] = useState("");
 
@@ -29,16 +31,17 @@ export default function Data() {
   });
   const [end, setEnd] = useState(() => isoDate(new Date()));
 
-  // paginação
-  const [page, setPage] = useState(1); // 1-based
+  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // dados
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
 
-  // estados
+  const [diseases, setDiseases] = useState(isPrefeitura ? ["Dengue"] : []);
+  const [ufs, setUfs] = useState(isPrefeitura ? ["RJ"] : []);
+
   const [loading, setLoading] = useState(false);
+  const [loadingMeta, setLoadingMeta] = useState(false);
   const [err, setErr] = useState("");
   const [exporting, setExporting] = useState(false);
 
@@ -46,23 +49,45 @@ export default function Data() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, [token]);
 
-  // ⚠️ Ajuste este endpoint para o seu backend real:
-  // Sugestão de contrato:
-  // GET /api/data/cases?disease=...&uf=...&start=...&end=...&q=...&page=1&page_size=20
-  // => { items: [...], total: 123 }
   const listEndpoint = `${apiBase}/data/cases`;
+
+  useEffect(() => {
+    if (isPrefeitura) setUf("all");
+  }, [isPrefeitura]);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
     p.set("disease", disease || "all");
-    p.set("uf", uf || "all");
+    p.set("uf", isPrefeitura ? "all" : (uf || "all"));
     p.set("start", start);
     p.set("end", end);
-    if (q.trim()) p.set("q", q.trim());
+    if (q.trim()) p.set("search", q.trim());
     p.set("page", String(page));
     p.set("page_size", String(pageSize));
     return p.toString();
-  }, [disease, uf, start, end, q, page, pageSize]);
+  }, [disease, uf, start, end, q, page, pageSize, isPrefeitura]);
+
+  const loadMeta = useCallback(async () => {
+    if (!token) return;
+
+    setLoadingMeta(true);
+    try {
+      const res = await fetch(`${apiBase}/data/meta`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+
+      if (!res.ok) return;
+
+      const body = await res.json();
+      setDiseases(Array.isArray(body?.diseases) ? body.diseases : []);
+      setUfs(Array.isArray(body?.ufs) ? body.ufs : []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingMeta(false);
+    }
+  }, [token, apiBase, authHeaders]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -71,7 +96,10 @@ export default function Data() {
     setErr("");
 
     try {
-      const res = await fetch(`${listEndpoint}?${qs}`, { headers: authHeaders });
+      const res = await fetch(`${listEndpoint}?${qs}`, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
       const ct = res.headers.get("content-type") || "";
 
       if (!res.ok) {
@@ -83,7 +111,7 @@ export default function Data() {
       }
 
       const body = ct.includes("application/json") ? await res.json() : null;
-      const items = Array.isArray(body?.items) ? body.items : Array.isArray(body) ? body : [];
+      const items = Array.isArray(body?.items) ? body.items : [];
       const t = Number(body?.total ?? items.length ?? 0);
 
       setRows(items);
@@ -100,18 +128,21 @@ export default function Data() {
 
   useEffect(() => {
     if (!token) return;
+    loadMeta();
+  }, [token, loadMeta]);
+
+  useEffect(() => {
+    if (!token) return;
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
   }, [token, load]);
 
-  // reset page ao mudar filtros principais
   useEffect(() => {
     setPage(1);
   }, [disease, uf, start, end, q, pageSize]);
 
   const pages = useMemo(() => {
-    const p = Math.max(1, Math.ceil((total || 0) / pageSize));
-    return p;
+    return Math.max(1, Math.ceil((total || 0) / pageSize));
   }, [total, pageSize]);
 
   const exportCsv = useCallback(async () => {
@@ -120,13 +151,15 @@ export default function Data() {
       return;
     }
 
-    // ⚠️ Ajuste este endpoint se necessário:
-    // GET /api/data/export/csv?...mesmos filtros...
     const exportUrl = `${apiBase}/data/export/csv?${qs}`;
 
     setExporting(true);
     try {
-      const res = await fetch(exportUrl, { headers: authHeaders });
+      const res = await fetch(exportUrl, {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+
       if (!res.ok) {
         let msg = `Falha ao exportar (HTTP ${res.status}).`;
         const ct = res.headers.get("content-type") || "";
@@ -160,21 +193,18 @@ export default function Data() {
     }
   }, [token, apiBase, qs, authHeaders]);
 
-  // dropdowns (MVP)
-  const diseases = ["Dengue", "Chikungunya", "Zika", "Coqueluche", "Rotavírus"];
-  const ufs = [
-    "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR",
-    "PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"
-  ];
-
   return (
     <div className="p-6">
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Dados</h1>
+            <h1 className="text-xl font-semibold text-gray-900">
+              {isPrefeitura ? "Dados do Município" : "Dados"}
+            </h1>
             <p className="text-sm text-gray-500 mt-1">
-              Explore dados brutos (filtros, paginação, exportação).
+              {isPrefeitura
+                ? "Explore os dados epidemiológicos do município."
+                : "Explore dados brutos com filtros, paginação e exportação."}
             </p>
           </div>
 
@@ -186,26 +216,30 @@ export default function Data() {
                 onChange={(e) => setDisease(e.target.value)}
                 className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1"
               >
-                <option value="all">Todas</option>
+                {!isPrefeitura && <option value="all">Todas</option>}
                 {diseases.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={String(d).toLowerCase()}>
+                    {d}
+                  </option>
                 ))}
               </select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-600">UF</label>
-              <select
-                value={uf}
-                onChange={(e) => setUf(e.target.value)}
-                className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1"
-              >
-                <option value="all">Todas</option>
-                {ufs.map((u) => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
-              </select>
-            </div>
+            {!isPrefeitura && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-gray-600">UF</label>
+                <select
+                  value={uf}
+                  onChange={(e) => setUf(e.target.value)}
+                  className="text-sm bg-white border border-gray-200 rounded-lg px-2 py-1"
+                >
+                  <option value="all">Todas</option>
+                  {ufs.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-gray-600">Início</label>
@@ -231,13 +265,13 @@ export default function Data() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar (município, id, etc.)"
+                placeholder={isPrefeitura ? "Buscar no município" : "Buscar (município, doença, etc.)"}
                 className="text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 w-[240px]"
               />
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-600">Page size</label>
+              <label className="text-xs font-semibold text-gray-600">Itens</label>
               <select
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value))}
@@ -257,7 +291,9 @@ export default function Data() {
               {exporting ? "Exportando…" : "Exportar CSV"}
             </button>
 
-            {loading && <span className="text-xs text-gray-500">Atualizando…</span>}
+            {(loading || loadingMeta) && (
+              <span className="text-xs text-gray-500">Atualizando…</span>
+            )}
           </div>
         </div>
 
@@ -303,8 +339,10 @@ export default function Data() {
                   <th className="px-4 py-3">Doença</th>
                   <th className="px-4 py-3">UF</th>
                   <th className="px-4 py-3">Município</th>
-                  <th className="px-4 py-3">ID Munic</th>
-                  <th className="px-4 py-3">Observação</th>
+                  <th className="px-4 py-3">IBGE</th>
+                  <th className="px-4 py-3">
+                    {isPrefeitura ? "Casos" : "Observação"}
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white">
@@ -324,22 +362,22 @@ export default function Data() {
                   rows.map((r, idx) => (
                     <tr key={r.id || idx} className="border-b border-gray-100">
                       <td className="px-4 py-3 text-gray-900">
-                        {r.dt_notific || r.date || "—"}
+                        {r.dt_notific || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-900">
-                        {r.disease_name || r.disease || "—"}
+                        {r.disease_name || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-900">
                         {r.uf || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-900">
-                        {r.municipality || r.city || r.name || "—"}
+                        {r.municipality || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-900">
-                        {r.id_municip || r.municipality_id || "—"}
+                        {r.ibge || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {r.note || r.obs || ""}
+                        {isPrefeitura ? fmt(r.count) : (r.note || "")}
                       </td>
                     </tr>
                   ))
@@ -350,7 +388,19 @@ export default function Data() {
         </div>
 
         <div className="mt-4 text-xs text-gray-500">
-          Endpoint atual: <span className="font-semibold">{listEndpoint}</span> (ajuste se necessário)
+          Filtros ativos: doença=<span className="font-semibold">{disease}</span>,
+          {!isPrefeitura && (
+            <>
+              {" "}uf=<span className="font-semibold">{uf}</span>,
+            </>
+          )}
+          {" "}período=<span className="font-semibold">{start}</span>→
+          <span className="font-semibold">{end}</span>
+          {isPrefeitura && (
+            <>
+              {" "} | escopo=<span className="font-semibold">município IBGE = ({tenantScopeValue})</span>
+            </>
+          )}
         </div>
       </div>
     </div>
