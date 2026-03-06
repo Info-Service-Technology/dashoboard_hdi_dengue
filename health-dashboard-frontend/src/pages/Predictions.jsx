@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
 import {
   LineChart,
   Line,
@@ -11,13 +12,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// ✅ axios local (não afeta o resto do app)
 const api = axios.create({
   baseURL: "http://localhost:5000/api/predictions",
   timeout: 20000,
 });
 
-// ✅ injeta token automaticamente em toda request desse módulo
 api.interceptors.request.use((config) => {
   const token =
     localStorage.getItem("token") || localStorage.getItem("access_token");
@@ -26,15 +25,17 @@ api.interceptors.request.use((config) => {
 });
 
 const Predictions = () => {
-  const [forecast, setForecast] = useState(null);
-  const [risk, setRisk] = useState(null);
+  const { tenant } = useAuth();
+
+  const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase();
+  const isPrefeitura = tenantScopeType === "MUN";
+
+  const [historical, setHistorical] = useState([]);
+  const [forecast, setForecast] = useState([]);
   const [error, setError] = useState(null);
 
   const [diseases, setDiseases] = useState([]);
-  const [states, setStates] = useState([]);
-
   const [disease, setDisease] = useState("");
-  const [state, setState] = useState("");
 
   const normalizeError = (e, fallback) =>
     e?.response?.data?.msg ||
@@ -43,94 +44,105 @@ const Predictions = () => {
     e?.message ||
     fallback;
 
-  // ✅ evita recriar array toda render
   const chartData = useMemo(() => {
-    if (!forecast) return [];
-
-    const hist = (forecast.historical_data || []).map((h) => ({
-      date: h.date,
+    const hist = (historical || []).map((h) => ({
+      bucket: h.bucket,
       real: Number(h.cases || 0),
+      predicted: null,
     }));
 
-    const pred = (forecast.forecast || []).map((f, i) => ({
-      date: f.date,
-      predicted: Number(f.predicted_cases || 0),
-      low: Number(forecast.confidence_interval?.[i]?.lower_bound ?? null),
-      high: Number(forecast.confidence_interval?.[i]?.upper_bound ?? null),
+    const pred = (forecast || []).map((f) => ({
+      bucket: f.bucket,
+      real: null,
+      predicted: Number(f.cases_pred || 0),
     }));
+
+    if (hist.length && pred.length) {
+      pred.unshift({
+        bucket: hist[hist.length - 1].bucket,
+        real: null,
+        predicted: hist[hist.length - 1].real,
+      });
+    }
 
     return [...hist, ...pred];
-  }, [forecast]);
+  }, [historical, forecast]);
 
   useEffect(() => {
     loadCatalogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (disease) loadForecast();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (disease) {
+      loadHistorical();
+      loadForecast();
+    }
   }, [disease]);
-
-  useEffect(() => {
-    if (state) loadRisk();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
 
   const loadCatalogs = async () => {
     try {
       setError(null);
 
-      const [dRes, sRes] = await Promise.all([
-        api.get("/diseases"),
-        api.get("/states"),
-      ]);
+      const dRes = await api.get("/diseases");
 
-      const dList = Array.isArray(dRes.data?.diseases) ? dRes.data.diseases : [];
-      const sList = Array.isArray(sRes.data?.states) ? sRes.data.states : [];
+      const dList = Array.isArray(dRes.data)
+        ? dRes.data
+        : Array.isArray(dRes.data?.diseases)
+          ? dRes.data.diseases
+          : [];
 
       setDiseases(dList);
-      setStates(sList);
-
-      // ✅ garante default sem loop
       setDisease((prev) => prev || (dList.length ? dList[0] : ""));
-      setState((prev) => prev || (sList.length ? sList[0] : ""));
     } catch (e) {
-      setError(normalizeError(e, "Erro ao carregar catálogos"));
+      setError(normalizeError(e, "Erro ao carregar doenças"));
+    }
+  };
+
+  const loadHistorical = async () => {
+    try {
+      setError(null);
+      setHistorical([]);
+
+      // histórico ainda não vem separado do backend atual
+      setHistorical([]);
+    } catch (e) {
+      setHistorical([]);
+      setError(normalizeError(e, "Erro ao carregar histórico"));
     }
   };
 
   const loadForecast = async () => {
     try {
       setError(null);
-      setForecast(null);
+      setForecast([]);
 
-      // backend espera: { disease, months_ahead }
-      const res = await api.post("/forecast", { disease, months_ahead: 6 });
-      setForecast(res.data || null);
+      const res = await api.get("/trends", {
+        params: {
+          disease: disease || "all",
+          gran: "month",
+          horizon: 6,
+        },
+      });
+
+      setForecast(Array.isArray(res.data) ? res.data : []);
     } catch (e) {
-      setForecast(null);
+      setForecast([]);
       setError(normalizeError(e, "Erro ao carregar forecast"));
-    }
-  };
-
-  const loadRisk = async () => {
-    try {
-      setError(null);
-      setRisk(null);
-
-      // backend espera: { state }
-      const res = await api.post("/risk-analysis", { state });
-      setRisk(res.data || null);
-    } catch (e) {
-      setRisk(null);
-      setError(normalizeError(e, "Erro ao carregar risco"));
     }
   };
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Análise Preditiva</h1>
+      <div>
+        <h1 className="text-2xl font-bold">
+          {isPrefeitura ? "Análise Preditiva do Município" : "Análise Preditiva"}
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">
+          {isPrefeitura
+            ? "Previsão epidemiológica no escopo do tenant prefeitura."
+            : "Previsões epidemiológicas por série temporal."}
+        </p>
+      </div>
 
       <div className="flex gap-4">
         <select
@@ -145,17 +157,11 @@ const Predictions = () => {
           ))}
         </select>
 
-        <select
-          value={state}
-          onChange={(e) => setState(e.target.value)}
-          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-        >
-          {states.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        {isPrefeitura && (
+          <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700">
+            Escopo municipal aplicado automaticamente
+          </div>
+        )}
       </div>
 
       {error && (
@@ -168,26 +174,23 @@ const Predictions = () => {
         <ResponsiveContainer width="100%" height={400}>
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
+            <XAxis dataKey="bucket" />
             <YAxis />
             <Tooltip />
             <Legend />
 
-            <Line dataKey="real" stroke="#2563eb" name="Casos Reais" dot={false} />
-            <Line dataKey="predicted" stroke="#dc2626" name="Previstos" dot={false} />
             <Line
-              dataKey="high"
-              stroke="#f59e0b"
-              strokeDasharray="4 4"
-              name="Limite superior"
+              dataKey="real"
+              stroke="#2563eb"
+              name="Casos Reais"
               dot={false}
               connectNulls
             />
+
             <Line
-              dataKey="low"
-              stroke="#10b981"
-              strokeDasharray="4 4"
-              name="Limite inferior"
+              dataKey="predicted"
+              stroke="#dc2626"
+              name="Previstos"
               dot={false}
               connectNulls
             />
@@ -195,15 +198,11 @@ const Predictions = () => {
         </ResponsiveContainer>
       </div>
 
-      {risk && (
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold">Risco {risk.state}</h2>
-          <p>
-            Nível: <strong>{risk.risk_level}</strong>
-          </p>
-          <p>Score: {(Number(risk.risk_score || 0) * 100).toFixed(1)}%</p>
-        </div>
-      )}
+      <div className="text-xs text-gray-500">
+        {isPrefeitura
+          ? "Tenant prefeitura: previsão baseada no município do escopo JWT."
+          : "Tenant Brasil: previsão baseada na série temporal nacional/filtrada."}
+      </div>
     </div>
   );
 };

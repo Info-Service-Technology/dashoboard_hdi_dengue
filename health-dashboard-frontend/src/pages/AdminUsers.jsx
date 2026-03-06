@@ -231,7 +231,7 @@ export default function AdminUsers() {
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Gerenciamento de Usuários</h1>
+            <h1 className="text-xl font-semibold text-gray-900">Gerenciamento de Usuários HDI</h1>
             <p className="text-sm text-gray-500 mt-1">Administração de acessos e perfis.</p>
           </div>
 
@@ -445,3 +445,6 @@ export default function AdminUsers() {
     </div>
   );
 }
+
+// src/pages/admin/AdminUsersPage.jsx
+export { default } from "./Users";

@@ -22,12 +22,14 @@ import {
 import axios from 'axios';
 
 const Dashboard = () => {
-  const { user, isAdmin, token } = useAuth();
+  const { user, isAdmin, token, tenant } = useAuth();
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Paleta simples (vai ciclar se tiver mais doenças)
+  const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase();
+  const isPrefeitura = tenantScopeType === "MUN";
+
   const COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0ea5e9', '#22c55e', '#e11d48'];
 
   useEffect(() => {
@@ -42,11 +44,10 @@ const Dashboard = () => {
         if (!token) {
           setDashboardData(null);
           setError('Você precisa estar logado para ver o dashboard.');
-          setLoading(false); // ✅ evita ficar preso no spinner
+          setLoading(false);
           return;
         }
 
-        // ✅ usa Bearer (JWT)
         const response = await axios.get('http://localhost:5000/api/dashboard', {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -66,19 +67,13 @@ const Dashboard = () => {
     return () => { alive = false; };
   }, [token]);
 
-  // =========================
-  // ✅ UF x Doença (stacked)
-  // =========================
   const { ufStackedData, diseaseKeys } = useMemo(() => {
     const rows = dashboardData?.cases_by_uf_disease;
     if (!Array.isArray(rows) || rows.length === 0) {
       return { ufStackedData: [], diseaseKeys: [] };
     }
 
-    // Lista de doenças presentes no dataset (ordenada p/ consistência)
     const diseases = Array.from(new Set(rows.map(r => r.disease).filter(Boolean))).sort();
-
-    // Pivot: { RJ: { uf:"RJ", Dengue: 10, Zika: 2, ... }, ... }
     const pivot = new Map();
 
     for (const r of rows) {
@@ -89,7 +84,6 @@ const Dashboard = () => {
       if (!uf || !disease) continue;
 
       if (!pivot.has(uf)) {
-        // inicializa com 0 para todas as doenças (evita undefined no gráfico)
         const base = { uf };
         for (const d of diseases) base[d] = 0;
         pivot.set(uf, base);
@@ -98,18 +92,22 @@ const Dashboard = () => {
       pivot.get(uf)[disease] = count;
     }
 
-    // transforma em array e calcula total p/ ordenar top 10 UFs
     const arr = Array.from(pivot.values()).map((row) => {
       const total = diseases.reduce((acc, d) => acc + (Number(row[d]) || 0), 0);
       return { ...row, __total: total };
     });
 
-    // Ordena por total desc e limita top 10
     arr.sort((a, b) => (b.__total || 0) - (a.__total || 0));
-    const top10 = arr.slice(0, 10).map(({ __total, ...rest }) => rest); // ✅ remove total do dataset do gráfico
+    const top10 = arr.slice(0, 10).map(({ __total, ...rest }) => rest);
 
     return { ufStackedData: top10, diseaseKeys: diseases };
   }, [dashboardData]);
+
+  const cityData = useMemo(() => {
+    return Array.isArray(dashboardData?.cases_by_city) ? dashboardData.cases_by_city : [];
+  }, [dashboardData]);
+
+  const cityName = cityData[0]?.city || "Município";
 
   if (loading) {
     return (
@@ -135,7 +133,9 @@ const Dashboard = () => {
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">Plataforma de Saúde - Health Data Insights</h1>
+          <h1 className="text-2xl font-bold">
+            {isPrefeitura ? `Painel da Prefeitura - ${cityName}` : 'Plataforma de Saúde - Health Data Insights'}
+          </h1>
           <p className="text-gray-600">Bem-vindo, {user?.first_name} {user?.last_name}</p>
         </div>
 
@@ -144,6 +144,12 @@ const Dashboard = () => {
             <Calendar className="h-3 w-3 mr-1" />
             Atualizado hoje
           </Badge>
+
+          {isPrefeitura && (
+            <Badge variant="secondary">
+              Município: {cityName}
+            </Badge>
+          )}
 
           {isAdmin && (
             <Button size="sm">
@@ -161,9 +167,9 @@ const Dashboard = () => {
             <CardTitle>Total de Casos</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">
-            {dashboardData.total_cases}
+            {dashboardData.total_cases?.toLocaleString('pt-BR')}
             <p className="text-xs text-muted-foreground">
-              Brasil
+              {isPrefeitura ? cityName : 'Brasil'}
             </p>
           </CardContent>
         </Card>
@@ -173,7 +179,7 @@ const Dashboard = () => {
             <CardTitle className="text-sm font-medium">Hospitalizações</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.hospitalization_count}</div>
+            <div className="text-2xl font-bold">{dashboardData.hospitalization_count?.toLocaleString('pt-BR')}</div>
             <p className="text-xs text-muted-foreground">
               {dashboardData.hospitalization_rate}% do total de casos
             </p>
@@ -185,7 +191,7 @@ const Dashboard = () => {
             <CardTitle className="text-sm font-medium">Óbitos Confirmados</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.death_count}</div>
+            <div className="text-2xl font-bold">{dashboardData.death_count?.toLocaleString('pt-BR')}</div>
             <p className="text-xs text-muted-foreground">
               Taxa de letalidade: {dashboardData.death_rate}%
             </p>
@@ -199,7 +205,7 @@ const Dashboard = () => {
           <CardContent className="text-2xl font-bold">
             {Array.isArray(dashboardData.cases_by_disease) ? dashboardData.cases_by_disease.length : 0}
             <p className="text-xs text-muted-foreground">
-              Brasil
+              {isPrefeitura ? cityName : 'Brasil'}
             </p>
           </CardContent>
         </Card>
@@ -207,10 +213,11 @@ const Dashboard = () => {
 
       {/* GRÁFICOS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* EVOLUÇÃO MENSAL */}
         <Card>
           <CardHeader>
-            <CardTitle>Evolução Mensal de Casos</CardTitle>
+            <CardTitle>
+              {isPrefeitura ? `Evolução Mensal de Casos - ${cityName}` : 'Evolução Mensal de Casos'}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -225,7 +232,6 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
-        {/* DOENÇAS */}
         <Card>
           <CardHeader>
             <CardTitle>Distribuição por Doença</CardTitle>
@@ -252,41 +258,83 @@ const Dashboard = () => {
         </Card>
       </div>
 
-      {/* ✅ CASOS POR UF (STACKED POR DOENÇA) */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Casos por Unidade Federativa (por Doença)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!ufStackedData.length ? (
-            <div className="text-sm text-muted-foreground">
-              Sem dados suficientes para UF x Doença. Verifique se o backend retorna <code>cases_by_uf_disease</code>.
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={ufStackedData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="uf" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                {diseaseKeys.map((disease, idx) => (
-                  <Bar
-                    key={disease}
-                    dataKey={disease}
-                    stackId="a"
-                    name={disease}
-                    fill={COLORS[idx % COLORS.length]}
-                  />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-          <p className="mt-2 text-xs text-muted-foreground">
-            * Brasil - Mostrando Top 10 UFs por total (somando todas as doenças).
-          </p>
-        </CardContent>
-      </Card>
+      {/* BRASIL: CASOS POR UF */}
+      {!isPrefeitura && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Casos por Unidade Federativa (por Doença)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!ufStackedData.length ? (
+              <div className="text-sm text-muted-foreground">
+                Sem dados suficientes para UF x Doença.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <BarChart data={ufStackedData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="uf" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  {diseaseKeys.map((disease, idx) => (
+                    <Bar
+                      key={disease}
+                      dataKey={disease}
+                      stackId="a"
+                      name={disease}
+                      fill={COLORS[idx % COLORS.length]}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              * Brasil - Mostrando Top 10 UFs por total.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* PREFEITURA: CASOS NO MUNICÍPIO */}
+      {isPrefeitura && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Casos no município</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {cityData.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                Sem dados do município.
+              </div>
+            ) : (
+              <div className="overflow-auto border rounded-lg">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr className="text-left">
+                      <th className="px-4 py-3 font-semibold text-gray-700">Município</th>
+                      <th className="px-4 py-3 font-semibold text-gray-700">UF</th>
+                      <th className="px-4 py-3 font-semibold text-gray-700">Casos</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {cityData.map((row) => (
+                      <tr key={row.city} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold text-gray-900">{row.city}</td>
+                        <td className="px-4 py-3">{row.uf}</td>
+                        <td className="px-4 py-3">{Number(row.count || 0).toLocaleString('pt-BR')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              * Dados epidemiológicos do tenant prefeitura.
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };

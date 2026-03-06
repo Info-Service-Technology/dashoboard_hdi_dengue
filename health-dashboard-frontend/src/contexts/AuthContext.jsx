@@ -1,3 +1,4 @@
+// src/contexts/AuthContext.jsx
 import { applyTheme } from "@/lib/theme";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import axios from "axios";
@@ -5,15 +6,15 @@ import axios from "axios";
 const AuthContext = createContext(null);
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth deve ser usado dentro de um AuthProvider");
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth deve ser usado dentro de um AuthProvider");
+  return ctx;
 };
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [tenant, setTenant] = useState(null);
+  const [tenant, setTenant] = useState(null); // ✅ NOVO
 
   const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [loading, setLoading] = useState(true);
@@ -24,11 +25,12 @@ export const AuthProvider = ({ children }) => {
     else delete axios.defaults.headers.common.Authorization;
   }, [token]);
 
+  // helper centralizado
   const refreshMe = async () => {
     const { data } = await axios.get("/api/account/me");
     setUser(data.user ?? null);
     setProfile(data.profile ?? null);
-    setTenant(data.tenant ?? null);
+    setTenant(data.tenant ?? null); // ✅
     applyTheme(data.profile?.theme ?? "light");
     return data;
   };
@@ -49,8 +51,8 @@ export const AuthProvider = ({ children }) => {
 
       try {
         await refreshMe();
-      } catch (error) {
-        console.error("Token inválido:", error);
+      } catch (err) {
+        console.error("Token inválido:", err);
         if (alive) logout();
       } finally {
         if (alive) setLoading(false);
@@ -64,14 +66,16 @@ export const AuthProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // ✅ login agora aceita tenantSlug
   const login = async (email, password, tenantSlug = "br") => {
     try {
-      const response = await axios.post("/api/auth/login", {
+      const payload = {
         email,
         password,
-        tenant_slug: tenantSlug,
-      });
+        tenant_slug: (tenantSlug || "br").trim().toLowerCase(),
+      };
 
+      const response = await axios.post("/api/auth/login", payload);
       const { access_token } = response.data;
 
       setToken(access_token);
@@ -79,7 +83,6 @@ export const AuthProvider = ({ children }) => {
       axios.defaults.headers.common.Authorization = `Bearer ${access_token}`;
 
       await refreshMe();
-
       return { success: true };
     } catch (error) {
       console.error("Erro no login:", error);
@@ -100,7 +103,6 @@ export const AuthProvider = ({ children }) => {
       axios.defaults.headers.common.Authorization = `Bearer ${access_token}`;
 
       await refreshMe();
-
       return { success: true };
     } catch (error) {
       console.error("Erro no registro:", error);
@@ -151,11 +153,18 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const tenantScope = useMemo(() => {
+    const scopeType = (tenant?.scope_type || "BR").toUpperCase();
+    const scopeValue = tenant?.scope_value || "all";
+    return { scopeType, scopeValue, slug: tenant?.slug || "br" };
+  }, [tenant]);
+
   const value = useMemo(
     () => ({
       user,
       profile,
-      tenant,
+      tenant, // ✅
+      tenantScope, // ✅
       token,
       loading,
       login,
@@ -167,7 +176,7 @@ export const AuthProvider = ({ children }) => {
       isAuthenticated: !!token,
       isAdmin: user?.role === "admin",
     }),
-    [user, profile, tenant, token, loading]
+    [user, profile, tenant, tenantScope, token, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
