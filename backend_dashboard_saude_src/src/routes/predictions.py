@@ -1,4 +1,3 @@
-from datetime import datetime
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func, text
@@ -26,9 +25,22 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
+def _tenant_binds():
+    return {
+        "marica-rj": "marica",
+        "macae-rj": "macae",
+        "petropolis-rj": "petropolis",
+    }
+
+
+def _has_tenant_bind(tenant_slug: str) -> bool:
+    return tenant_slug in _tenant_binds()
+
+
 def _get_session_for_tenant(tenant_slug: str) -> Session:
-    if tenant_slug == "marica-rj":
-        engine = db.get_engine(bind="marica")
+    bind = _tenant_binds().get(tenant_slug)
+    if bind:
+        engine = db.get_engine(bind=bind)
         return Session(bind=engine)
     return db.session
 
@@ -65,14 +77,17 @@ def prediction_trends():
         if horizon > 24:
             horizon = 24
 
-        if tenant_slug == "marica-rj":
+        # =================================================
+        # PREFEITURA COM DATALAKE PRÓPRIO
+        # =================================================
+        if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
             if disease not in ("all", "dengue"):
                 return jsonify([]), 200
 
             sess = _get_session_for_tenant(tenant_slug)
             mun6 = _mun_code6(scope_value)
 
-            if scope_type == "MUN" and not mun6:
+            if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
             sql = """
@@ -114,7 +129,6 @@ def prediction_trends():
             pred = []
             base_year = series[-1]["year"]
             base_month = series[-1]["month"]
-
             current = last_val if last_val > 0 else avg_last
 
             for i in range(1, horizon + 1):
@@ -127,6 +141,9 @@ def prediction_trends():
 
             return jsonify(pred), 200
 
+        # =================================================
+        # BASE GERAL
+        # =================================================
         q = (
             db.session.query(
                 func.date_format(HealthCase.dt_notific, "%Y-%m").label("bucket"),
@@ -183,7 +200,6 @@ def prediction_trends():
         pred = []
         base_year = series[-1]["year"]
         base_month = series[-1]["month"]
-
         current = last_val if last_val > 0 else avg_last
 
         for i in range(1, horizon + 1):
@@ -205,16 +221,16 @@ def prediction_trends():
 @jwt_required()
 def prediction_diseases():
     try:
-        _scope_type, _scope_value, tenant_slug = _tenant_scope()
+        scope_type, _scope_value, tenant_slug = _tenant_scope()
 
-        if tenant_slug == "marica-rj":
+        if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
             return jsonify(["Dengue"]), 200
 
         rows = (
             db.session.query(HealthCase.disease_name)
             .filter(HealthCase.disease_name.isnot(None))
             .filter(func.trim(HealthCase.disease_name) != "")
-            .distinct() 
+            .distinct()
             .order_by(HealthCase.disease_name.asc())
             .all()
         )

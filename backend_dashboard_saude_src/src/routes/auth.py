@@ -10,6 +10,15 @@ from src.models.tenant import Tenant, UserTenant
 auth_bp = Blueprint("auth", __name__)
 
 
+def _get_tenant_by_slug(slug: str):
+    slug = (slug or "br").strip().lower() or "br"
+    return (
+        Tenant.query.filter(db.func.lower(Tenant.slug) == slug)
+        .filter(Tenant.is_active == True)
+        .first()
+    )
+
+
 def _get_tenant_or_error(user_id: int, tenant_slug: str):
     """
     Resolve tenant por slug e valida vínculo user<->tenant.
@@ -17,13 +26,8 @@ def _get_tenant_or_error(user_id: int, tenant_slug: str):
     """
     slug = (tenant_slug or "br").strip().lower() or "br"
 
-    tenant = (
-        Tenant.query.filter(db.func.lower(Tenant.slug) == slug)
-        .filter(Tenant.is_active == True)
-        .first()
-    )
+    tenant = _get_tenant_by_slug(slug)
     if not tenant:
-        # tenant não existe / inativo -> 400 (request inválido)
         return None, ({"error": "Tenant inválido ou inativo"}, 400)
 
     link = (
@@ -32,7 +36,6 @@ def _get_tenant_or_error(user_id: int, tenant_slug: str):
         .first()
     )
     if not link:
-        # tenant existe, mas usuário não pode -> 403
         return None, (
             {"error": "ACESSO NEGADO: você não pode acessar escopo de outra cidade."},
             403,
@@ -49,7 +52,7 @@ def _issue_token(user: User, tenant: Tenant) -> str:
         "role": user.role,
         "tenant": tenant.slug,
         "tenant_scope_type": tenant.scope_type,   # BR|UF|MUN
-        "tenant_scope_value": tenant.scope_value, # all | RJ | 330270
+        "tenant_scope_value": tenant.scope_value, # all | RJ | 3302700
     }
 
     return create_access_token(
@@ -59,26 +62,30 @@ def _issue_token(user: User, tenant: Tenant) -> str:
     )
 
 
+def _ensure_tenant_link(user_id: int, tenant: Tenant) -> None:
+    """
+    Garante vínculo user<->tenant sem duplicar registro.
+    Não dá commit aqui.
+    """
+    exists = (
+        db.session.query(UserTenant)
+        .filter(UserTenant.user_id == user_id, UserTenant.tenant_id == tenant.id)
+        .first()
+    )
+    if not exists:
+        db.session.add(UserTenant(user_id=user_id, tenant_id=tenant.id))
+
+
 def _ensure_default_tenant_br_for_user(user_id: int) -> None:
     """
     Garante vínculo no tenant 'br' se existir e se ainda não estiver vinculado.
     (Não dá commit aqui; deixa quem chama decidir.)
     """
-    tenant_br = (
-        Tenant.query.filter(db.func.lower(Tenant.slug) == "br")
-        .filter(Tenant.is_active == True)
-        .first()
-    )
+    tenant_br = _get_tenant_by_slug("br")
     if not tenant_br:
         return
 
-    exists = (
-        db.session.query(UserTenant)
-        .filter(UserTenant.user_id == user_id, UserTenant.tenant_id == tenant_br.id)
-        .first()
-    )
-    if not exists:
-        db.session.add(UserTenant(user_id=user_id, tenant_id=tenant_br.id))
+    _ensure_tenant_link(user_id, tenant_br)
 
 
 def _sanitize_role(role: str) -> str:
@@ -87,7 +94,11 @@ def _sanitize_role(role: str) -> str:
     Ajuste conforme seus papéis reais.
     """
     role = (role or "guest").strip().lower()
-    allowed = {"guest", "admin"}  # ajuste se tiver mais
+
+    # REGRA SEGURA:
+    # cadastro público não deve conseguir criar admin livremente
+    # se quiser manter seu comportamento antigo, troque para {"guest", "admin"}
+    allowed = {"guest"}
     return role if role in allowed else "guest"
 
 
@@ -95,9 +106,13 @@ def _sanitize_role(role: str) -> str:
 def register():
     """
     Registrar novo usuário.
+
+    Comportamento:
     - Cria usuário
-    - Vincula automaticamente ao tenant default 'br' (se existir)
-    - Retorna token já no tenant 'br'
+    - Se vier tenant_slug no payload, vincula nesse tenant
+    - Se não vier tenant_slug, cai no tenant 'br'
+    - Também mantém vínculo em 'br' se ele existir (opcional e seguro para fallback)
+    - Retorna token já no tenant escolhido
     """
     try:
         data = request.get_json(silent=True) or {}
@@ -108,9 +123,14 @@ def register():
                 return jsonify({"error": f"Campo {field} é obrigatório"}), 400
 
         email = data["email"].strip().lower()
+        tenant_slug = (data.get("tenant_slug") or "br").strip().lower() or "br"
 
         if User.query.filter(db.func.lower(User.email) == email).first():
             return jsonify({"error": "Email já cadastrado"}), 400
+
+        tenant = _get_tenant_by_slug(tenant_slug)
+        if not tenant:
+            return jsonify({"error": "Tenant inválido ou inativo"}), 400
 
         user = User(
             first_name=data["first_name"].strip(),
@@ -121,28 +141,18 @@ def register():
         user.set_password(data["password"])
 
         db.session.add(user)
+        db.session.flush()
+
+        # vínculo no tenant solicitado
+        _ensure_tenant_link(user.id, tenant)
+
+        # mantém vínculo BR se existir, sem quebrar compatibilidade
+        if tenant.slug != "br":
+            _ensure_default_tenant_br_for_user(user.id)
+
         db.session.commit()
 
-        # vínculo default BR
-        _ensure_default_tenant_br_for_user(user.id)
-        db.session.commit()
-
-        # emite token BR
-        tenant_br = (
-            Tenant.query.filter(db.func.lower(Tenant.slug) == "br")
-            .filter(Tenant.is_active == True)
-            .first()
-        )
-        if not tenant_br:
-            # fallback seguro se não existir tenant br
-            return jsonify(
-                {
-                    "message": "Usuário registrado com sucesso, mas tenant 'br' não está configurado.",
-                    "user": user.to_dict(),
-                }
-            ), 201
-
-        access_token = _issue_token(user, tenant_br)
+        access_token = _issue_token(user, tenant)
 
         return jsonify(
             {
@@ -150,10 +160,10 @@ def register():
                 "access_token": access_token,
                 "user": user.to_dict(),
                 "tenant": {
-                    "slug": tenant_br.slug,
-                    "name": tenant_br.name,
-                    "scope_type": tenant_br.scope_type,
-                    "scope_value": tenant_br.scope_value,
+                    "slug": tenant.slug,
+                    "name": tenant.name,
+                    "scope_type": tenant.scope_type,
+                    "scope_value": tenant.scope_value,
                 },
             }
         ), 201
@@ -243,8 +253,10 @@ def update_profile():
 
         if "first_name" in data:
             user.first_name = str(data["first_name"])[:50]
+
         if "last_name" in data:
             user.last_name = str(data["last_name"])[:50]
+
         if "email" in data:
             new_email = str(data["email"]).strip().lower()
             existing_user = User.query.filter(db.func.lower(User.email) == new_email).first()
@@ -311,7 +323,6 @@ def list_user_tenants():
 
     user = User.query.filter(db.func.lower(User.email) == email).first()
     if not user:
-        # não vaza info demais
         return jsonify([]), 200
 
     rows = (
@@ -322,4 +333,6 @@ def list_user_tenants():
         .all()
     )
 
-    return jsonify([{"slug": t.slug, "name": t.name} for t in rows]), 200
+    return jsonify(
+        [{"slug": t.slug, "name": t.name} for t in rows]
+    ), 200

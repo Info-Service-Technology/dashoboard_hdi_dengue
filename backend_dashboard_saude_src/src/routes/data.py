@@ -20,9 +20,22 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
+def _tenant_binds():
+    return {
+        "marica-rj": "marica",
+        "macae-rj": "macae",
+        "petropolis-rj": "petropolis",
+    }
+
+
+def _has_tenant_bind(tenant_slug: str) -> bool:
+    return tenant_slug in _tenant_binds()
+
+
 def _get_session_for_tenant(tenant_slug: str) -> Session:
-    if tenant_slug == "marica-rj":
-        engine = db.get_engine(bind="marica")
+    bind = _tenant_binds().get(tenant_slug)
+    if bind:
+        engine = db.get_engine(bind=bind)
         return Session(bind=engine)
     return db.session
 
@@ -86,9 +99,9 @@ def list_cases():
     scope_type, scope_value, tenant_slug = _tenant_scope()
 
     # =================================================
-    # TENANT PREFEITURA (MARICÁ)
+    # TENANT PREFEITURA (qualquer tenant com bind e scope MUN)
     # =================================================
-    if tenant_slug == "marica-rj":
+    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
         try:
             sess = _get_session_for_tenant(tenant_slug)
 
@@ -105,8 +118,8 @@ def list_cases():
             direction = (request.args.get("dir") or "desc").strip().lower()
             order_dir = "DESC" if direction == "desc" else "ASC"
 
-            mun6 = _mun_code6(scope_value) if scope_type == "MUN" else None
-            if scope_type == "MUN" and not mun6:
+            mun6 = _mun_code6(scope_value)
+            if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
             if disease not in ("all", "dengue"):
@@ -136,15 +149,13 @@ def list_cases():
                 "v.granularidade = 'mensal'",
                 "STR_TO_DATE(CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0'), '-01'), '%Y-%m-%d') >= :start_d",
                 "STR_TO_DATE(CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0'), '-01'), '%Y-%m-%d') <= :end_d",
+                "v.municipio = :municipio",
             ]
             params = {
                 "start_d": start_d.isoformat(),
                 "end_d": end_d.isoformat(),
+                "municipio": mun6,
             }
-
-            if scope_type == "MUN":
-                where_clauses.append("v.municipio = :municipio")
-                params["municipio"] = mun6
 
             if search:
                 where_clauses.append("(LOWER(m.name) LIKE :search OR LOWER(m.uf) LIKE :search)")
@@ -173,7 +184,7 @@ def list_cases():
                         v.casos AS count
                     FROM vw_dengue_kpis v
                     JOIN municipalities m
-                      ON m.id = CONCAT(v.municipio, '0')
+                      ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
                     {where_sql}
                 ) x
             """
@@ -191,7 +202,7 @@ def list_cases():
                     CONCAT('Agregado mensal do tenant prefeitura - ', v.ano, '-', LPAD(v.periodo, 2, '0')) AS note
                 FROM vw_dengue_kpis v
                 JOIN municipalities m
-                  ON m.id = CONCAT(v.municipio, '0')
+                  ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
                 {where_sql}
                 ORDER BY {sort_col} {order_dir}
                 LIMIT :limit OFFSET :offset
@@ -239,7 +250,7 @@ def list_cases():
             }), 200
 
         except Exception as e:
-            print(f"❌ data prefeitura: {e}")
+            print(f"❌ data prefeitura ({tenant_slug}): {e}")
             return jsonify({"error": "Erro interno ao processar dados da prefeitura"}), 500
 
     # =================================================
@@ -315,7 +326,7 @@ def list_cases():
 def data_meta():
     scope_type, scope_value, tenant_slug = _tenant_scope()
 
-    if tenant_slug == "marica-rj":
+    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
         return jsonify({
             "diseases": ["Dengue"],
             "ufs": ["RJ"],
