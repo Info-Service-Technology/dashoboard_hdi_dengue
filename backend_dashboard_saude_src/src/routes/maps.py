@@ -1,4 +1,3 @@
-# src/routes/maps.py
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func, text
@@ -26,6 +25,18 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
+def _tenant_binds():
+    return {
+        "marica-rj": "marica",
+        "macae-rj": "macae",
+        "petropolis-rj": "petropolis",
+    }
+
+
+def _has_tenant_bind(tenant_slug: str) -> bool:
+    return tenant_slug in _tenant_binds()
+
+
 def _parse_bbox():
     bbox = request.args.get("bbox")
     if not bbox:
@@ -45,8 +56,9 @@ def _parse_bbox():
 
 
 def _get_session_for_tenant(tenant_slug: str) -> Session:
-    if tenant_slug == "marica-rj":
-        engine = db.get_engine(bind="marica")
+    bind = _tenant_binds().get(tenant_slug)
+    if bind:
+        engine = db.get_engine(bind=bind)
         return Session(bind=engine)
     return db.session
 
@@ -62,17 +74,6 @@ def _mun_code6(scope_value: str):
     return None
 
 
-def _mun_code7(scope_value: str):
-    v = str(scope_value or "").strip()
-    if not v.isdigit():
-        return None
-    if len(v) == 7:
-        return v
-    if len(v) == 6:
-        return v + "0"
-    return None
-
-
 # -------------------------------------------------
 # MAPA MUNICÍPIOS
 # GET /api/maps
@@ -85,18 +86,19 @@ def maps_data():
     bbox = _parse_bbox()
 
     # ==========================
-    # MODO MARICÁ (AGREGADO)
+    # MODO PREFEITURA (AGREGADO NO DATALAKE DO TENANT)
     # ==========================
-    if tenant_slug == "marica-rj":
+    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
         try:
             sess = _get_session_for_tenant(tenant_slug)
 
-            mun7 = _mun_code7(scope_value) if scope_type == "MUN" else None
-            if scope_type == "MUN" and not mun7:
+            mun6 = _mun_code6(scope_value)
+            if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
-            # A view tem granularidade mensal e semanal.
-            # Para mapa, usamos SOMENTE mensal para evitar duplicação.
+            if disease.lower() not in ("all", "dengue"):
+                return jsonify([]), 200
+
             sql = """
             SELECT
                 m.uf AS state,
@@ -107,22 +109,14 @@ def maps_data():
                 SUM(v.casos) AS cases
             FROM vw_dengue_kpis v
             JOIN municipalities m
-              ON m.id = CONCAT(v.municipio, '0')
+              ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
             WHERE m.latitude IS NOT NULL
               AND m.longitude IS NOT NULL
               AND v.granularidade = 'mensal'
+              AND v.municipio = :municipio
             """
 
-            params = {}
-
-            # escopo forçado por JWT
-            if scope_type == "MUN":
-                sql += " AND m.id = :mun7 "
-                params["mun7"] = mun7
-
-            # view é de dengue; outra doença retorna vazio
-            if disease.lower() not in ("all", "dengue"):
-                return jsonify([]), 200
+            params = {"municipio": mun6}
 
             if bbox:
                 min_lng, min_lat, max_lng, max_lat = bbox
@@ -154,7 +148,7 @@ def maps_data():
             ]), 200
 
         except Exception as e:
-            print(f"❌ Erro ao buscar mapa prefeitura: {e}")
+            print(f"❌ Erro ao buscar mapa prefeitura ({tenant_slug}): {e}")
             return jsonify({"error": "Erro interno ao processar mapa da prefeitura"}), 500
 
     # ==========================
@@ -235,12 +229,7 @@ def maps_data_uf():
     disease = (request.args.get("disease") or "all").strip()
     bbox = _parse_bbox()
 
-    # Modo prefeitura não usa visão UF
     if scope_type == "MUN":
-        return jsonify([]), 200
-
-    # tenant Maricá também não usa visão UF
-    if tenant_slug == "marica-rj":
         return jsonify([]), 200
 
     try:

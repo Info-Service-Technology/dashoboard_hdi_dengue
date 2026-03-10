@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,21 +10,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Eye, EyeOff, Activity, UserPlus } from 'lucide-react';
 
 const Register = () => {
+  const [searchParams] = useSearchParams();
+
+  const tenantSlugFromUrl = useMemo(() => {
+    return (searchParams.get('tenant') || searchParams.get('tenant_slug') || 'br').trim().toLowerCase();
+  }, [searchParams]);
+
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
     email: '',
     password: '',
     confirmPassword: '',
-    role: 'guest'
+    role: 'guest',
+    tenant_slug: tenantSlugFromUrl,
   });
+
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   const { register } = useAuth();
   const navigate = useNavigate();
+
+  const isTenantScoped = tenantSlugFromUrl !== 'br';
+
+  const tenantLabel = useMemo(() => {
+    if (tenantSlugFromUrl === 'marica-rj') return 'Maricá';
+    if (tenantSlugFromUrl === 'br') return 'Brasil';
+    return tenantSlugFromUrl;
+  }, [tenantSlugFromUrl]);
 
   const handleChange = (field, value) => {
     setFormData(prev => ({
@@ -37,7 +53,6 @@ const Register = () => {
     e.preventDefault();
     setError('');
 
-    // Validações
     if (formData.password !== formData.confirmPassword) {
       setError('As senhas não coincidem');
       return;
@@ -52,29 +67,32 @@ const Register = () => {
 
     const { confirmPassword, ...registerData } = formData;
     const result = await register(registerData);
-    
+
     if (result.success) {
       navigate('/dashboard');
     } else {
       setError(result.error);
     }
-    
+
     setLoading(false);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6">
-        {/* Header */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center space-x-2">
             <Activity className="h-8 w-8 text-blue-600" />
             <h1 className="text-2xl font-bold text-gray-900">HDI - Dashboard de Saúde</h1>
           </div>
           <p className="text-gray-600">Análise Preditiva em Saúde Pública</p>
+          {isTenantScoped && (
+            <p className="text-sm text-blue-700 font-medium">
+              Cadastro vinculado ao tenant: {tenantLabel}
+            </p>
+          )}
         </div>
 
-        {/* Register Form */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -85,6 +103,7 @@ const Register = () => {
               Registre-se para acessar o dashboard de análise de dados
             </CardDescription>
           </CardHeader>
+
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
@@ -92,7 +111,7 @@ const Register = () => {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-              
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="first_name">Nome</Label>
@@ -105,6 +124,7 @@ const Register = () => {
                     required
                   />
                 </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="last_name">Sobrenome</Label>
                   <Input
@@ -117,7 +137,7 @@ const Register = () => {
                   />
                 </div>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -132,17 +152,26 @@ const Register = () => {
 
               <div className="space-y-2">
                 <Label htmlFor="role">Tipo de Conta</Label>
-                <Select value={formData.role} onValueChange={(value) => handleChange('role', value)}>
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) => handleChange('role', value)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o tipo de conta" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="guest">Convidado - Acesso de visualização</SelectItem>
-                    <SelectItem value="admin">Administrador - Acesso completo</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              
+
+              {isTenantScoped && (
+                <div className="space-y-2">
+                  <Label>Tenant</Label>
+                  <Input value={tenantLabel} disabled />
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="password">Senha</Label>
                 <div className="relative">
@@ -161,11 +190,7 @@ const Register = () => {
                     className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowPassword(!showPassword)}
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
               </div>
@@ -188,24 +213,20 @@ const Register = () => {
                     className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   >
-                    {showConfirmPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
               </div>
-              
-              <Button 
-                type="submit" 
-                className="w-full" 
+
+              <Button
+                type="submit"
+                className="w-full"
                 disabled={loading}
               >
                 {loading ? 'Criando conta...' : 'Criar Conta'}
               </Button>
             </form>
-            
+
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-600">
                 Já tem uma conta?{' '}
@@ -217,7 +238,6 @@ const Register = () => {
           </CardContent>
         </Card>
 
-        {/* Footer */}
         <div className="text-center text-xs text-gray-500">
           <p>Sistema de Análise Preditiva em Saúde</p>
           <p>Dados baseados no SINAN - Sistema de Informação de Agravos de Notificação</p>
@@ -228,4 +248,3 @@ const Register = () => {
 };
 
 export default Register;
-

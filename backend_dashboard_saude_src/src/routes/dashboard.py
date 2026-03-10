@@ -25,9 +25,22 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
+def _tenant_binds():
+    return {
+        "marica-rj": "marica",
+        "macae-rj": "macae",
+        "petropolis-rj": "petropolis",
+    }
+
+
+def _has_tenant_bind(tenant_slug: str) -> bool:
+    return tenant_slug in _tenant_binds()
+
+
 def _get_session_for_tenant(tenant_slug: str) -> Session:
-    if tenant_slug == "marica-rj":
-        engine = db.get_engine(bind="marica")
+    bind = _tenant_binds().get(tenant_slug)
+    if bind:
+        engine = db.get_engine(bind=bind)
         return Session(bind=engine)
     return db.session
 
@@ -51,17 +64,17 @@ def dashboard():
     scope_type, scope_value, tenant_slug = _tenant_scope()
 
     # ==========================================
-    # TENANT PREFEITURA: MARICÁ via vw_dengue_kpis
+    # TENANT PREFEITURA: DATALAKE DO TENANT VIA vw_dengue_kpis
     # ==========================================
-    if tenant_slug == "marica-rj":
+    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
         try:
             sess = _get_session_for_tenant(tenant_slug)
 
-            mun6 = _mun_code6(scope_value) if scope_type == "MUN" else None
-            if scope_type == "MUN" and not mun6:
+            mun6 = _mun_code6(scope_value)
+            if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
-            # A view do tenant Maricá é específica de dengue.
+            # datalake municipal atual é específico de dengue
             if disease_filter.lower() not in ("all", "dengue"):
                 return jsonify({
                     "total_cases": 0,
@@ -80,20 +93,17 @@ def dashboard():
                         "tenant_slug": tenant_slug,
                         "scope_type": scope_type,
                         "scope_value": scope_value,
+                        "city_name": None,
                         "mode": "prefeitura"
                     }
                 }), 200
 
-            params = {}
-            where_clauses = ["v.granularidade = 'mensal'"]
+            params = {"municipio": mun6}
+            where_sql = """
+                WHERE v.granularidade = 'mensal'
+                  AND v.municipio = :municipio
+            """
 
-            if scope_type == "MUN":
-                where_clauses.append("v.municipio = :municipio")
-                params["municipio"] = mun6
-
-            where_sql = "WHERE " + " AND ".join(where_clauses)
-
-            # total de casos - SEMPRE usando granularidade mensal
             total_sql = f"""
                 SELECT COALESCE(SUM(v.casos), 0) AS total_cases
                 FROM vw_dengue_kpis v
@@ -101,7 +111,6 @@ def dashboard():
             """
             total_cases = int(sess.execute(text(total_sql), params).scalar() or 0)
 
-            # evolução mensal
             month_sql = f"""
                 SELECT
                     CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0')) AS month,
@@ -113,7 +122,6 @@ def dashboard():
             """
             cases_by_month = sess.execute(text(month_sql), params).mappings().all()
 
-            # município / UF do tenant - também usando granularidade mensal
             city_sql = f"""
                 SELECT
                     m.name AS city,
@@ -121,26 +129,27 @@ def dashboard():
                     SUM(v.casos) AS count
                 FROM vw_dengue_kpis v
                 JOIN municipalities m
-                  ON m.id = CONCAT(v.municipio, '0')
+                  ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
                 {where_sql}
                 GROUP BY m.name, m.uf
                 ORDER BY count DESC
             """
             cases_by_city = sess.execute(text(city_sql), params).mappings().all()
 
-            # compatibilidade com frontend atual
             uf_sql = f"""
                 SELECT
                     m.uf AS uf,
                     SUM(v.casos) AS count
                 FROM vw_dengue_kpis v
                 JOIN municipalities m
-                  ON m.id = CONCAT(v.municipio, '0')
+                  ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
                 {where_sql}
                 GROUP BY m.uf
                 ORDER BY count DESC
             """
             cases_by_uf = sess.execute(text(uf_sql), params).mappings().all()
+
+            city_name = cases_by_city[0]["city"] if cases_by_city else None
 
             return jsonify({
                 "total_cases": total_cases,
@@ -171,18 +180,32 @@ def dashboard():
                     "tenant_slug": tenant_slug,
                     "scope_type": scope_type,
                     "scope_value": scope_value,
+                    "city_name": city_name,
                     "mode": "prefeitura"
                 }
             }), 200
 
         except Exception as e:
-            print(f"❌ dashboard prefeitura: {e}")
+            print(f"❌ dashboard prefeitura ({tenant_slug}): {e}")
             return jsonify({"error": "Erro interno ao processar dashboard da prefeitura"}), 500
 
     # ==========================================
-    # MODO PADRÃO: BRASIL / UF via health_cases
+    # MODO PADRÃO: BRASIL / UF / MUN via health_cases
     # ==========================================
-    total_cases = db.session.query(func.count(HealthCase.id)).scalar() or 0
+    base_total_q = db.session.query(func.count(HealthCase.id))
+
+    if scope_type == "UF":
+        base_total_q = base_total_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            base_total_q = base_total_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
+    if disease_filter.lower() != "all":
+        base_total_q = base_total_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
+
+    total_cases = base_total_q.scalar() or 0
 
     if total_cases == 0:
         return jsonify({
@@ -200,34 +223,85 @@ def dashboard():
                 "tenant_slug": tenant_slug,
                 "scope_type": scope_type,
                 "scope_value": scope_value,
-                "mode": "brasil"
+                "city_name": None,
+                "mode": "prefeitura" if scope_type == "MUN" else "brasil"
             }
         }), 200
 
-    hosp_count = db.session.query(func.count(HealthCase.id)).filter(HealthCase.hospitaliz == 1).scalar() or 0
+    hosp_q = db.session.query(func.count(HealthCase.id)).filter(HealthCase.hospitaliz == 1)
+    death_q = db.session.query(func.count(HealthCase.id)).filter(HealthCase.evolucao == 2)
+
+    if scope_type == "UF":
+        hosp_q = hosp_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+        death_q = death_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            hosp_q = hosp_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+            death_q = death_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
+    if disease_filter.lower() != "all":
+        hosp_q = hosp_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
+        death_q = death_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
+
+    hosp_count = hosp_q.scalar() or 0
     hosp_rate = round((hosp_count / total_cases) * 100, 1) if total_cases else 0
 
-    death_count = db.session.query(func.count(HealthCase.id)).filter(HealthCase.evolucao == 2).scalar() or 0
+    death_count = death_q.scalar() or 0
     death_rate = round((death_count / total_cases) * 100, 1) if total_cases else 0
 
-    diseases = [
-        r[0] for r in db.session.query(HealthCase.disease_name)
-        .filter(HealthCase.disease_name.isnot(None))
+    diseases_q = db.session.query(HealthCase.disease_name) \
+        .filter(HealthCase.disease_name.isnot(None)) \
         .filter(func.trim(HealthCase.disease_name) != "")
-        .distinct()
-        .order_by(HealthCase.disease_name.asc())
-        .all()
+
+    if scope_type == "UF":
+        diseases_q = diseases_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            diseases_q = diseases_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
+    diseases = [
+        r[0] for r in diseases_q.distinct().order_by(HealthCase.disease_name.asc()).all()
     ]
 
-    cases_by_disease = db.session.query(
+    cases_by_disease_q = db.session.query(
         HealthCase.disease_name.label("disease"),
         func.count(HealthCase.id).label("count")
-    ).group_by(HealthCase.disease_name).all()
+    )
 
-    cases_by_month = db.session.query(
+    if scope_type == "UF":
+        cases_by_disease_q = cases_by_disease_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            cases_by_disease_q = cases_by_disease_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
+    if disease_filter.lower() != "all":
+        cases_by_disease_q = cases_by_disease_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
+
+    cases_by_disease = cases_by_disease_q.group_by(HealthCase.disease_name).all()
+
+    cases_by_month_q = db.session.query(
         func.date_format(HealthCase.dt_notific, "%Y-%m").label("month"),
         func.count(HealthCase.id).label("count")
-    ).filter(HealthCase.dt_notific.isnot(None)).group_by("month").order_by("month").all()
+    ).filter(HealthCase.dt_notific.isnot(None))
+
+    if scope_type == "UF":
+        cases_by_month_q = cases_by_month_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            cases_by_month_q = cases_by_month_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
+    if disease_filter.lower() != "all":
+        cases_by_month_q = cases_by_month_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
+
+    cases_by_month = cases_by_month_q.group_by("month").order_by("month").all()
 
     base_join = (
         db.session.query(
@@ -239,6 +313,14 @@ def dashboard():
             func.substr(Municipality.id, 1, 6) == func.substr(HealthCase.id_municip, 1, 6)
         )
     )
+
+    if scope_type == "UF":
+        base_join = base_join.filter(func.upper(Municipality.uf) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            base_join = base_join.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
 
     if disease_filter.lower() != "all":
         base_join = base_join.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
@@ -262,14 +344,25 @@ def dashboard():
             func.substr(Municipality.id, 1, 6) == func.substr(HealthCase.id_municip, 1, 6)
         )
         .filter(HealthCase.disease_name.isnot(None))
-        .group_by(Municipality.uf, HealthCase.disease_name)
-        .order_by(Municipality.uf.asc(), HealthCase.disease_name.asc())
     )
+
+    if scope_type == "UF":
+        uf_disease_q = uf_disease_q.filter(func.upper(Municipality.uf) == scope_value)
+
+    if scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            uf_disease_q = uf_disease_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
 
     if disease_filter.lower() != "all":
         uf_disease_q = uf_disease_q.filter(func.lower(HealthCase.disease_name) == disease_filter.lower())
 
-    cases_by_uf_disease = uf_disease_q.all()
+    cases_by_uf_disease = (
+        uf_disease_q
+        .group_by(Municipality.uf, HealthCase.disease_name)
+        .order_by(Municipality.uf.asc(), HealthCase.disease_name.asc())
+        .all()
+    )
 
     return jsonify({
         "total_cases": total_cases,
@@ -287,6 +380,7 @@ def dashboard():
             "tenant_slug": tenant_slug,
             "scope_type": scope_type,
             "scope_value": scope_value,
-            "mode": "brasil"
+            "city_name": None,
+            "mode": "prefeitura" if scope_type == "MUN" else "brasil"
         }
     }), 200

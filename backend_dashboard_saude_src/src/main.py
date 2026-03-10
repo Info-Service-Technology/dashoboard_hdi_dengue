@@ -49,7 +49,9 @@ app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:123456@172.22.1.2:
 # app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:123456@172.22.1.2:3306/marica_datalake"
 # binds: bases de dados "de dados" por prefeitura
 app.config["SQLALCHEMY_BINDS"] = {
-    "marica": "mysql+pymysql://root:123456@172.22.1.2:3306/marica_datalake",
+    "marica": "mysql+pymysql://root:123456@172.22.1.2/marica_datalake",
+    "macae": "mysql+pymysql://root:123456@172.22.1.2/macae_datalake",
+    "petropolis": "mysql+pymysql://root:123456@172.22.1.2/petropolis_datalake"
 }
 
 # -----------------------------

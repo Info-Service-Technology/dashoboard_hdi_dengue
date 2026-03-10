@@ -14,23 +14,21 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [tenant, setTenant] = useState(null); // ✅ NOVO
+  const [tenant, setTenant] = useState(null);
 
   const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [loading, setLoading] = useState(true);
 
-  // aplica token no axios
   useEffect(() => {
     if (token) axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     else delete axios.defaults.headers.common.Authorization;
   }, [token]);
 
-  // helper centralizado
   const refreshMe = async () => {
     const { data } = await axios.get("/api/account/me");
     setUser(data.user ?? null);
     setProfile(data.profile ?? null);
-    setTenant(data.tenant ?? null); // ✅
+    setTenant(data.tenant ?? null);
     applyTheme(data.profile?.theme ?? "light");
     return data;
   };
@@ -66,7 +64,6 @@ export const AuthProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // ✅ login agora aceita tenantSlug
   const login = async (email, password, tenantSlug = "br") => {
     try {
       const payload = {
@@ -95,7 +92,12 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (userData) => {
     try {
-      const response = await axios.post("/api/auth/register", userData);
+      const payload = {
+        ...userData,
+        tenant_slug: (userData?.tenant_slug || "br").trim().toLowerCase(),
+      };
+
+      const response = await axios.post("/api/auth/register", payload);
       const { access_token } = response.data;
 
       setToken(access_token);
@@ -163,8 +165,8 @@ export const AuthProvider = ({ children }) => {
     () => ({
       user,
       profile,
-      tenant, // ✅
-      tenantScope, // ✅
+      tenant,
+      tenantScope,
       token,
       loading,
       login,

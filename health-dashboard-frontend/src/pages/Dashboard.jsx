@@ -26,6 +26,7 @@ const Dashboard = () => {
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
 
   const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase();
   const isPrefeitura = tenantScopeType === "MUN";
@@ -107,7 +108,10 @@ const Dashboard = () => {
     return Array.isArray(dashboardData?.cases_by_city) ? dashboardData.cases_by_city : [];
   }, [dashboardData]);
 
-  const cityName = cityData[0]?.city || "Município";
+  const cityName = useMemo(() => {
+      if (!isPrefeitura) return "Brasil";
+      return dashboardData?.scope?.city_name || cityData?.[0]?.city || "Município";
+    }, [isPrefeitura, dashboardData, cityData]);
 
   if (loading) {
     return (

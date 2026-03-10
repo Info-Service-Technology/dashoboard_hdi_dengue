@@ -1,0 +1,25 @@
+Melhor forma de pensar
+
+Para uma cidade nova, o onboarding é:
+
+camada 1 — acesso
+
+criar tenant
+
+criar usuários
+
+login ok
+
+camada 2 — estrutura de dados
+
+criar banco/schema
+
+criar tabelas
+
+criar views
+
+camada 3 — carga de dados da prefeitura
+
+importar os dados reais da própria cidade
+
+popular fatos e agregados
