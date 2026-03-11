@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+import json
 
 from src.models.user import db
 from src.models.health_data import HealthCase
@@ -25,24 +26,45 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
-def _tenant_binds():
-    return {
-        "marica-rj": "marica",
-        "macae-rj": "macae",
-        "petropolis-rj": "petropolis",
-    }
+def _resolve_tenant_data_source(tenant_slug: str):
+    sql = text("""
+        SELECT
+            t.slug AS tenant_slug,
+            t.scope_type,
+            t.scope_value,
+            ds.bind_key,
+            ds.datalake_db,
+            ds.aggregate_view_name,
+            ds.supported_diseases_json,
+            ds.municipality_join_mode,
+            ds.is_active
+        FROM tenants t
+        JOIN tenant_data_sources ds
+          ON ds.tenant_id = t.id
+        WHERE LOWER(t.slug) = :tenant_slug
+          AND t.is_active = 1
+          AND ds.is_active = 1
+        LIMIT 1
+    """)
+    return db.session.execute(
+        sql, {"tenant_slug": tenant_slug.lower()}
+    ).mappings().first()
 
 
-def _has_tenant_bind(tenant_slug: str) -> bool:
-    return tenant_slug in _tenant_binds()
+def _get_tenant_session(bind_key: str):
+    if not bind_key:
+        return db.session
+    engine = db.get_engine(bind=bind_key)
+    return Session(bind=engine)
 
 
-def _get_session_for_tenant(tenant_slug: str) -> Session:
-    bind = _tenant_binds().get(tenant_slug)
-    if bind:
-        engine = db.get_engine(bind=bind)
-        return Session(bind=engine)
-    return db.session
+def _get_supported_diseases(ds_row):
+    raw = ds_row["supported_diseases_json"]
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [x.lower() for x in json.loads(raw)]
+    return [str(x).lower() for x in raw]
 
 
 def _mun_code6(scope_value: str):
@@ -68,7 +90,6 @@ def _add_months(year: int, month: int, add: int):
 def prediction_trends():
     try:
         scope_type, scope_value, tenant_slug = _tenant_scope()
-
         disease = (request.args.get("disease") or "all").strip().lower()
         horizon = int(request.args.get("horizon") or 12)
 
@@ -77,45 +98,53 @@ def prediction_trends():
         if horizon > 24:
             horizon = 24
 
-        # =================================================
-        # PREFEITURA COM DATALAKE PRÓPRIO
-        # =================================================
-        if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
-            if disease not in ("all", "dengue"):
+        ds = _resolve_tenant_data_source(tenant_slug)
+
+        if scope_type == "MUN" and ds:
+            supported_diseases = _get_supported_diseases(ds)
+            if disease != "all" and disease not in supported_diseases:
                 return jsonify([]), 200
 
-            sess = _get_session_for_tenant(tenant_slug)
+            sess = _get_tenant_session(ds["bind_key"])
+            view_name = ds["aggregate_view_name"]
             mun6 = _mun_code6(scope_value)
 
             if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
-            sql = """
+            where_clauses = [
+                "v.granularidade = 'mensal'",
+                "v.municipio = :municipio"
+            ]
+            params = {"municipio": mun6}
+
+            if disease != "all":
+                where_clauses.append("LOWER(v.disease_name) = :disease_name")
+                params["disease_name"] = disease
+
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+            sql = f"""
                 SELECT
                     v.ano AS ano,
                     v.periodo AS periodo,
                     SUM(v.casos) AS cases
-                FROM vw_dengue_kpis v
-                WHERE v.granularidade = 'mensal'
-                  AND v.municipio = :municipio
+                FROM {view_name} v
+                {where_sql}
                 GROUP BY v.ano, v.periodo
                 ORDER BY v.ano, v.periodo
             """
-
-            rows = sess.execute(text(sql), {"municipio": mun6}).mappings().all()
+            rows = sess.execute(text(sql), params).mappings().all()
 
             if not rows:
                 return jsonify([]), 200
 
             series = []
             for r in rows:
-                ano = int(r["ano"])
-                periodo = int(r["periodo"])
-                cases = int(r["cases"] or 0)
                 series.append({
-                    "year": ano,
-                    "month": periodo,
-                    "cases": cases
+                    "year": int(r["ano"]),
+                    "month": int(r["periodo"]),
+                    "cases": int(r["cases"] or 0)
                 })
 
             last_values = [s["cases"] for s in series[-3:]]
@@ -141,9 +170,6 @@ def prediction_trends():
 
             return jsonify(pred), 200
 
-        # =================================================
-        # BASE GERAL
-        # =================================================
         q = (
             db.session.query(
                 func.date_format(HealthCase.dt_notific, "%Y-%m").label("bucket"),
@@ -164,11 +190,7 @@ def prediction_trends():
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
             q = q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
 
-        rows = (
-            q.group_by("bucket")
-            .order_by("bucket")
-            .all()
-        )
+        rows = q.group_by("bucket").order_by("bucket").all()
 
         if not rows:
             return jsonify([]), 200
@@ -222,9 +244,11 @@ def prediction_trends():
 def prediction_diseases():
     try:
         scope_type, _scope_value, tenant_slug = _tenant_scope()
+        ds = _resolve_tenant_data_source(tenant_slug)
 
-        if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
-            return jsonify(["Dengue"]), 200
+        if scope_type == "MUN" and ds:
+            supported_diseases = _get_supported_diseases(ds)
+            return jsonify([d.title() for d in supported_diseases]), 200
 
         rows = (
             db.session.query(HealthCase.disease_name)

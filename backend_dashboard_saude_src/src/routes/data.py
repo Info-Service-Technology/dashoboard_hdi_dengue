@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func, desc, asc, text
 from sqlalchemy.orm import Session
+import json
 
 from src.models.user import db
 from src.models.health_data import HealthCase, Municipality
@@ -12,43 +13,65 @@ data_bp = Blueprint("data", __name__)
 
 def _tenant_scope():
     claims = get_jwt() or {}
-
     scope_type = (claims.get("tenant_scope_type") or "BR").strip().upper()
     scope_value = str(claims.get("tenant_scope_value") or "all").strip()
     tenant_slug = (claims.get("tenant") or "br").strip().lower()
-
     return scope_type, scope_value, tenant_slug
 
 
-def _tenant_binds():
-    return {
-        "marica-rj": "marica",
-        "macae-rj": "macae",
-        "petropolis-rj": "petropolis",
-    }
+def _resolve_tenant_data_source(tenant_slug: str):
+    sql = text("""
+        SELECT
+            t.slug AS tenant_slug,
+            t.scope_type,
+            t.scope_value,
+            ds.bind_key,
+            ds.datalake_db,
+            ds.aggregate_view_name,
+            ds.supported_diseases_json,
+            ds.municipality_join_mode,
+            ds.is_active
+        FROM tenants t
+        JOIN tenant_data_sources ds
+          ON ds.tenant_id = t.id
+        WHERE LOWER(t.slug) = :tenant_slug
+          AND t.is_active = 1
+          AND ds.is_active = 1
+        LIMIT 1
+    """)
+    return db.session.execute(
+        sql, {"tenant_slug": tenant_slug.lower()}
+    ).mappings().first()
 
 
-def _has_tenant_bind(tenant_slug: str) -> bool:
-    return tenant_slug in _tenant_binds()
+def _get_tenant_session(bind_key: str):
+    if not bind_key:
+        return db.session
+    engine = db.get_engine(bind=bind_key)
+    return Session(bind=engine)
 
 
-def _get_session_for_tenant(tenant_slug: str) -> Session:
-    bind = _tenant_binds().get(tenant_slug)
-    if bind:
-        engine = db.get_engine(bind=bind)
-        return Session(bind=engine)
-    return db.session
+def _get_supported_diseases(ds_row):
+    raw = ds_row["supported_diseases_json"]
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [x.lower() for x in json.loads(raw)]
+    return [str(x).lower() for x in raw]
 
 
 def _mun_code6(scope_value: str):
     v = str(scope_value or "").strip()
     if not v.isdigit():
         return None
-    if len(v) == 6:
-        return v
-    if len(v) == 7:
-        return v[:6]
-    return None
+    return v[:6] if len(v) >= 6 else None
+
+
+def _municipality_join_sql():
+    return (
+        "LEFT(CAST(m.id AS CHAR) COLLATE utf8mb4_unicode_ci, 6) = "
+        "v.municipio COLLATE utf8mb4_unicode_ci"
+    )
 
 
 def _parse_dates():
@@ -92,18 +115,14 @@ def _base_query():
 @data_bp.route("/data/cases", methods=["GET"])
 @jwt_required()
 def list_cases():
-    """
-    GET /api/data/cases?disease=...&uf=...&start=YYYY-MM-DD&end=YYYY-MM-DD
-      &page=1&page_size=25&sort=dt_notific&dir=desc&search=texto
-    """
     scope_type, scope_value, tenant_slug = _tenant_scope()
+    ds = _resolve_tenant_data_source(tenant_slug)
 
-    # =================================================
-    # TENANT PREFEITURA (qualquer tenant com bind e scope MUN)
-    # =================================================
-    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
+    if scope_type == "MUN" and ds:
         try:
-            sess = _get_session_for_tenant(tenant_slug)
+            sess = _get_tenant_session(ds["bind_key"])
+            view_name = ds["aggregate_view_name"]
+            supported_diseases = _get_supported_diseases(ds)
 
             disease = (request.args.get("disease") or "all").strip().lower()
             start_d, end_d = _parse_dates()
@@ -122,7 +141,7 @@ def list_cases():
             if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
-            if disease not in ("all", "dengue"):
+            if disease != "all" and disease not in supported_diseases:
                 return jsonify({
                     "items": [],
                     "total": 0,
@@ -145,6 +164,7 @@ def list_cases():
                     }
                 }), 200
 
+            join_sql = _municipality_join_sql()
             where_clauses = [
                 "v.granularidade = 'mensal'",
                 "STR_TO_DATE(CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0'), '-01'), '%Y-%m-%d') >= :start_d",
@@ -157,8 +177,14 @@ def list_cases():
                 "municipio": mun6,
             }
 
+            if disease != "all":
+                where_clauses.append("LOWER(v.disease_name) = :disease_name")
+                params["disease_name"] = disease
+
             if search:
-                where_clauses.append("(LOWER(m.name) LIKE :search OR LOWER(m.uf) LIKE :search)")
+                where_clauses.append(
+                    "(LOWER(m.name) LIKE :search OR LOWER(m.uf) LIKE :search OR LOWER(v.disease_name) LIKE :search)"
+                )
                 params["search"] = f"%{search}%"
 
             where_sql = "WHERE " + " AND ".join(where_clauses)
@@ -177,37 +203,35 @@ def list_cases():
                 FROM (
                     SELECT
                         STR_TO_DATE(CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0'), '-01'), '%Y-%m-%d') AS dt_notific_ref,
-                        'Dengue' AS disease_name,
+                        v.disease_name AS disease_name,
                         m.uf AS uf,
                         m.name AS municipality,
                         m.id AS ibge,
                         v.casos AS count
-                    FROM vw_dengue_kpis v
+                    FROM {view_name} v
                     JOIN municipalities m
-                      ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
+                      ON {join_sql}
                     {where_sql}
                 ) x
             """
-
             total = int(sess.execute(text(total_sql), params).scalar() or 0)
 
             data_sql = f"""
                 SELECT
                     STR_TO_DATE(CONCAT(v.ano, '-', LPAD(v.periodo, 2, '0'), '-01'), '%Y-%m-%d') AS dt_notific_ref,
-                    'Dengue' AS disease_name,
+                    v.disease_name AS disease_name,
                     m.uf AS uf,
                     m.name AS municipality,
                     m.id AS ibge,
                     v.casos AS count,
                     CONCAT('Agregado mensal do tenant prefeitura - ', v.ano, '-', LPAD(v.periodo, 2, '0')) AS note
-                FROM vw_dengue_kpis v
+                FROM {view_name} v
                 JOIN municipalities m
-                  ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
+                  ON {join_sql}
                 {where_sql}
                 ORDER BY {sort_col} {order_dir}
                 LIMIT :limit OFFSET :offset
             """
-
             params_page = dict(params)
             params_page["limit"] = page_size
             params_page["offset"] = (page - 1) * page_size
@@ -217,7 +241,7 @@ def list_cases():
             items = []
             for r in rows:
                 items.append({
-                    "id": f"{r['ibge']}-{r['dt_notific_ref']}",
+                    "id": f"{r['ibge']}-{r['disease_name']}-{r['dt_notific_ref']}",
                     "dt_notific": r["dt_notific_ref"].isoformat() if r["dt_notific_ref"] else None,
                     "disease_name": r["disease_name"],
                     "uf": r["uf"],
@@ -250,12 +274,9 @@ def list_cases():
             }), 200
 
         except Exception as e:
-            print(f"❌ data prefeitura ({tenant_slug}): {e}")
-            return jsonify({"error": "Erro interno ao processar dados da prefeitura"}), 500
+            print(f"❌ data tenant ({tenant_slug}): {e}")
+            return jsonify({"error": "Erro interno ao processar dados do tenant"}), 500
 
-    # =================================================
-    # MODO BRASIL
-    # =================================================
     q, disease, uf, start_d, end_d = _base_query()
 
     search = (request.args.get("search") or request.args.get("q") or "").strip()
@@ -325,10 +346,12 @@ def list_cases():
 @jwt_required()
 def data_meta():
     scope_type, scope_value, tenant_slug = _tenant_scope()
+    ds = _resolve_tenant_data_source(tenant_slug)
 
-    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
+    if scope_type == "MUN" and ds:
+        supported_diseases = _get_supported_diseases(ds)
         return jsonify({
-            "diseases": ["Dengue"],
+            "diseases": [d.title() for d in supported_diseases],
             "ufs": ["RJ"],
             "scope": {
                 "tenant_slug": tenant_slug,
