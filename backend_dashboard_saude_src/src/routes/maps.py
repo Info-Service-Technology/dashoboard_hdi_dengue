@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+import json
 
 from src.models.user import db
 from src.models.health_data import HealthCase, Municipality
@@ -25,16 +26,59 @@ def _tenant_scope():
     return scope_type, scope_value, tenant_slug
 
 
-def _tenant_binds():
-    return {
-        "marica-rj": "marica",
-        "macae-rj": "macae",
-        "petropolis-rj": "petropolis",
-    }
+def _resolve_tenant_data_source(tenant_slug: str):
+    sql = text("""
+        SELECT
+            t.slug AS tenant_slug,
+            t.scope_type,
+            t.scope_value,
+            ds.bind_key,
+            ds.datalake_db,
+            ds.aggregate_view_name,
+            ds.supported_diseases_json,
+            ds.municipality_join_mode,
+            ds.is_active
+        FROM tenants t
+        JOIN tenant_data_sources ds
+          ON ds.tenant_id = t.id
+        WHERE LOWER(t.slug) = :tenant_slug
+          AND t.is_active = 1
+          AND ds.is_active = 1
+        LIMIT 1
+    """)
+    return db.session.execute(
+        sql, {"tenant_slug": tenant_slug.lower()}
+    ).mappings().first()
 
 
-def _has_tenant_bind(tenant_slug: str) -> bool:
-    return tenant_slug in _tenant_binds()
+def _get_tenant_session(bind_key: str):
+    if not bind_key:
+        return db.session
+    engine = db.get_engine(bind=bind_key)
+    return Session(bind=engine)
+
+
+def _get_supported_diseases(ds_row):
+    raw = ds_row["supported_diseases_json"]
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [x.lower() for x in json.loads(raw)]
+    return [str(x).lower() for x in raw]
+
+
+def _mun_code6(scope_value: str):
+    v = str(scope_value or "").strip()
+    if not v.isdigit():
+        return None
+    return v[:6] if len(v) >= 6 else None
+
+
+def _municipality_join_sql():
+    return (
+        "LEFT(CAST(m.id AS CHAR) COLLATE utf8mb4_unicode_ci, 6) = "
+        "v.municipio COLLATE utf8mb4_unicode_ci"
+    )
 
 
 def _parse_bbox():
@@ -55,73 +99,48 @@ def _parse_bbox():
         return None
 
 
-def _get_session_for_tenant(tenant_slug: str) -> Session:
-    bind = _tenant_binds().get(tenant_slug)
-    if bind:
-        engine = db.get_engine(bind=bind)
-        return Session(bind=engine)
-    return db.session
-
-
-def _mun_code6(scope_value: str):
-    v = str(scope_value or "").strip()
-    if not v.isdigit():
-        return None
-    if len(v) == 6:
-        return v
-    if len(v) == 7:
-        return v[:6]
-    return None
-
-
-# -------------------------------------------------
-# MAPA MUNICÍPIOS
-# GET /api/maps
-# -------------------------------------------------
 @maps_bp.route("/maps", methods=["GET"])
 @jwt_required()
 def maps_data():
     scope_type, scope_value, tenant_slug = _tenant_scope()
-    disease = (request.args.get("disease") or "all").strip()
+    disease = (request.args.get("disease") or "all").strip().lower()
     bbox = _parse_bbox()
 
-    # ==========================
-    # MODO PREFEITURA (AGREGADO NO DATALAKE DO TENANT)
-    # ==========================
-    if scope_type == "MUN" and _has_tenant_bind(tenant_slug):
-        try:
-            sess = _get_session_for_tenant(tenant_slug)
+    ds = _resolve_tenant_data_source(tenant_slug)
 
+    # ==========================
+    # MODO TENANT MUNICIPAL
+    # ==========================
+    if scope_type == "MUN" and ds:
+        try:
+            sess = _get_tenant_session(ds["bind_key"])
+            view_name = ds["aggregate_view_name"]
+            supported_diseases = _get_supported_diseases(ds)
             mun6 = _mun_code6(scope_value)
+
             if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
 
-            if disease.lower() not in ("all", "dengue"):
+            if disease != "all" and disease not in supported_diseases:
                 return jsonify([]), 200
 
-            sql = """
-            SELECT
-                m.uf AS state,
-                m.name AS city,
-                'Dengue' AS disease,
-                m.latitude AS lat,
-                m.longitude AS lng,
-                SUM(v.casos) AS cases
-            FROM vw_dengue_kpis v
-            JOIN municipalities m
-              ON LEFT(CAST(m.id AS CHAR), 6) = v.municipio
-            WHERE m.latitude IS NOT NULL
-              AND m.longitude IS NOT NULL
-              AND v.granularidade = 'mensal'
-              AND v.municipio = :municipio
-            """
-
+            join_sql = _municipality_join_sql()
+            where_clauses = [
+                "m.latitude IS NOT NULL",
+                "m.longitude IS NOT NULL",
+                "v.granularidade = 'mensal'",
+                "v.municipio = :municipio",
+            ]
             params = {"municipio": mun6}
+
+            if disease != "all":
+                where_clauses.append("LOWER(v.disease_name) = :disease_name")
+                params["disease_name"] = disease
 
             if bbox:
                 min_lng, min_lat, max_lng, max_lat = bbox
-                sql += " AND m.longitude BETWEEN :min_lng AND :max_lng "
-                sql += " AND m.latitude BETWEEN :min_lat AND :max_lat "
+                where_clauses.append("m.longitude BETWEEN :min_lng AND :max_lng")
+                where_clauses.append("m.latitude BETWEEN :min_lat AND :max_lat")
                 params.update({
                     "min_lng": min_lng,
                     "max_lng": max_lng,
@@ -129,8 +148,22 @@ def maps_data():
                     "max_lat": max_lat,
                 })
 
-            sql += """
-            GROUP BY m.uf, m.name, m.latitude, m.longitude
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+            sql = f"""
+                SELECT
+                    m.uf AS state,
+                    m.name AS city,
+                    v.disease_name AS disease,
+                    m.latitude AS lat,
+                    m.longitude AS lng,
+                    SUM(v.casos) AS cases
+                FROM {view_name} v
+                JOIN municipalities m
+                  ON {join_sql}
+                {where_sql}
+                GROUP BY m.uf, m.name, v.disease_name, m.latitude, m.longitude
+                ORDER BY cases DESC
             """
 
             rows = sess.execute(text(sql), params).mappings().all()
@@ -148,11 +181,11 @@ def maps_data():
             ]), 200
 
         except Exception as e:
-            print(f"❌ Erro ao buscar mapa prefeitura ({tenant_slug}): {e}")
-            return jsonify({"error": "Erro interno ao processar mapa da prefeitura"}), 500
+            print(f"❌ Erro ao buscar mapa tenant ({tenant_slug}): {e}")
+            return jsonify({"error": "Erro interno ao processar mapa do tenant"}), 500
 
     # ==========================
-    # MODO PADRÃO (LINHA-A-LINHA)
+    # MODO PADRÃO
     # ==========================
     try:
         sess = db.session
@@ -174,8 +207,8 @@ def maps_data():
             .filter(Municipality.longitude.isnot(None))
         )
 
-        if disease.lower() != "all":
-            q = q.filter(func.lower(HealthCase.disease_name) == func.lower(disease))
+        if disease != "all":
+            q = q.filter(func.lower(HealthCase.disease_name) == disease)
 
         if scope_type == "UF":
             q = q.filter(func.upper(Municipality.uf) == scope_value)
@@ -218,15 +251,11 @@ def maps_data():
         return jsonify({"error": "Erro interno ao processar mapa"}), 500
 
 
-# -------------------------------------------------
-# MAPA UF
-# GET /api/maps/uf
-# -------------------------------------------------
 @maps_bp.route("/maps/uf", methods=["GET"])
 @jwt_required()
 def maps_data_uf():
-    scope_type, scope_value, tenant_slug = _tenant_scope()
-    disease = (request.args.get("disease") or "all").strip()
+    scope_type, scope_value, _tenant_slug = _tenant_scope()
+    disease = (request.args.get("disease") or "all").strip().lower()
     bbox = _parse_bbox()
 
     if scope_type == "MUN":
@@ -251,8 +280,8 @@ def maps_data_uf():
             .filter(Municipality.longitude.isnot(None))
         )
 
-        if disease.lower() != "all":
-            q = q.filter(func.lower(HealthCase.disease_name) == func.lower(disease))
+        if disease != "all":
+            q = q.filter(func.lower(HealthCase.disease_name) == disease)
 
         if scope_type == "UF":
             q = q.filter(func.upper(Municipality.uf) == scope_value)
