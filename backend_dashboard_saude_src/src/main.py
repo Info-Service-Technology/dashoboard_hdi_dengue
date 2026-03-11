@@ -27,6 +27,7 @@ from src.routes.admin_users import admin_users_bp
 from src.routes.kpis import kpis_bp
 from src.routes.geo import geo_bp
 from datetime import timedelta
+from src.routes.tenants import tenants_bp
 
 
 def _env_truthy(name: str, default: str = "") -> bool:
@@ -133,6 +134,7 @@ app.register_blueprint(admin_users_bp, url_prefix="/api")
 app.register_blueprint(predictions_bp, url_prefix="/api/predictions")
 app.register_blueprint(kpis_bp, url_prefix="/api")
 app.register_blueprint(geo_bp, url_prefix="/api")
+app.register_blueprint(tenants_bp, url_prefix="/api")
 # -----------------------------
 # Init DB + seeds mínimos
 # -----------------------------

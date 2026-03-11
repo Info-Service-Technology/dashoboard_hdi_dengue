@@ -1,9 +1,13 @@
-import React, { useMemo, useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { AlertTriangle, Calendar, Download } from 'lucide-react';
+import React, { useMemo, useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Calendar, Download } from "lucide-react";
+import PageLoading from "../components/common/PageLoading";
+import ErrorState from "../components/common/ErrorState";
+import EmptyState from "../components/common/EmptyState";
 import {
   AreaChart,
   Area,
@@ -17,21 +21,30 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer
-} from 'recharts';
-import axios from 'axios';
+  ResponsiveContainer,
+} from "recharts";
+import axios from "axios";
+
+const COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#f59e0b",
+  "#dc2626",
+  "#7c3aed",
+  "#0ea5e9",
+  "#22c55e",
+  "#e11d48",
+];
 
 const Dashboard = () => {
-  const { user, isAdmin, token, tenant } = useAuth();
+  const { user, isAdmin, token } = useAuth();
+  const { tenantName, scopeType, isMunicipal, loadingTenant } = useTenant();
+
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
 
-  const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase();
-  const isPrefeitura = tenantScopeType === "MUN";
-
-  const COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0ea5e9', '#22c55e', '#e11d48'];
+  const isPrefeitura = isMunicipal;
 
   useEffect(() => {
     let alive = true;
@@ -39,42 +52,55 @@ const Dashboard = () => {
     const fetchDashboardData = async () => {
       try {
         if (!alive) return;
+
         setLoading(true);
         setError(null);
 
         if (!token) {
           setDashboardData(null);
-          setError('Você precisa estar logado para ver o dashboard.');
-          setLoading(false);
+          setError("Você precisa estar logado para ver o dashboard.");
           return;
         }
 
-        const response = await axios.get('http://localhost:5000/api/dashboard', {
-          headers: { Authorization: `Bearer ${token}` }
+        const response = await axios.get("/api/dashboard", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         });
 
         if (!alive) return;
+
         setDashboardData(response.data);
       } catch (err) {
         console.error(err);
+
         if (!alive) return;
-        setError('Erro ao carregar dados do dashboard');
+
+        setDashboardData(null);
+        setError("Erro ao carregar dados do dashboard.");
       } finally {
         if (alive) setLoading(false);
       }
     };
 
     fetchDashboardData();
-    return () => { alive = false; };
-  }, [token]);
+
+    return () => {
+      alive = false;
+    };
+  }, [token, scopeType]);
 
   const { ufStackedData, diseaseKeys } = useMemo(() => {
     const rows = dashboardData?.cases_by_uf_disease;
+
     if (!Array.isArray(rows) || rows.length === 0) {
       return { ufStackedData: [], diseaseKeys: [] };
     }
 
-    const diseases = Array.from(new Set(rows.map(r => r.disease).filter(Boolean))).sort();
+    const diseases = Array.from(
+      new Set(rows.map((r) => r.disease).filter(Boolean))
+    ).sort();
+
     const pivot = new Map();
 
     for (const r of rows) {
@@ -105,32 +131,27 @@ const Dashboard = () => {
   }, [dashboardData]);
 
   const cityData = useMemo(() => {
-    return Array.isArray(dashboardData?.cases_by_city) ? dashboardData.cases_by_city : [];
+    return Array.isArray(dashboardData?.cases_by_city)
+      ? dashboardData.cases_by_city
+      : [];
   }, [dashboardData]);
 
   const cityName = useMemo(() => {
-      if (!isPrefeitura) return "Brasil";
-      return dashboardData?.scope?.city_name || cityData?.[0]?.city || "Município";
-    }, [isPrefeitura, dashboardData, cityData]);
+    if (!isPrefeitura) return "Brasil";
+    return dashboardData?.scope?.city_name || cityData?.[0]?.city || tenantName || "Município";
+  }, [isPrefeitura, dashboardData, cityData, tenantName]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600" />
-      </div>
-    );
+  if (loading || loadingTenant) {
+    return <PageLoading message="Carregando dashboard..." />;
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center h-64 text-red-600">
-        <AlertTriangle className="mr-2" />
-        {error}
-      </div>
-    );
+    return <ErrorState message={error} />;
   }
 
-  if (!dashboardData) return null;
+  if (!dashboardData) {
+    return <EmptyState message="Nenhum dado disponível para o dashboard." />;
+  }
 
   return (
     <div className="space-y-6">
@@ -138,9 +159,13 @@ const Dashboard = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">
-            {isPrefeitura ? `Painel da Prefeitura - ${cityName}` : 'Plataforma de Saúde - Health Data Insights'}
+            {isPrefeitura
+              ? `Painel da Prefeitura - ${cityName}`
+              : "Plataforma de Saúde - Health Data Insights"}
           </h1>
-          <p className="text-gray-600">Bem-vindo, {user?.first_name} {user?.last_name}</p>
+          <p className="text-gray-600">
+            Bem-vindo, {user?.first_name} {user?.last_name}
+          </p>
         </div>
 
         <div className="flex gap-3">
@@ -171,9 +196,9 @@ const Dashboard = () => {
             <CardTitle>Total de Casos</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">
-            {dashboardData.total_cases?.toLocaleString('pt-BR')}
+            {Number(dashboardData.total_cases || 0).toLocaleString("pt-BR")}
             <p className="text-xs text-muted-foreground">
-              {isPrefeitura ? cityName : 'Brasil'}
+              {isPrefeitura ? cityName : "Brasil"}
             </p>
           </CardContent>
         </Card>
@@ -183,9 +208,11 @@ const Dashboard = () => {
             <CardTitle className="text-sm font-medium">Hospitalizações</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.hospitalization_count?.toLocaleString('pt-BR')}</div>
+            <div className="text-2xl font-bold">
+              {Number(dashboardData.hospitalization_count || 0).toLocaleString("pt-BR")}
+            </div>
             <p className="text-xs text-muted-foreground">
-              {dashboardData.hospitalization_rate}% do total de casos
+              {dashboardData.hospitalization_rate ?? 0}% do total de casos
             </p>
           </CardContent>
         </Card>
@@ -195,9 +222,11 @@ const Dashboard = () => {
             <CardTitle className="text-sm font-medium">Óbitos Confirmados</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData.death_count?.toLocaleString('pt-BR')}</div>
+            <div className="text-2xl font-bold">
+              {Number(dashboardData.death_count || 0).toLocaleString("pt-BR")}
+            </div>
             <p className="text-xs text-muted-foreground">
-              Taxa de letalidade: {dashboardData.death_rate}%
+              Taxa de letalidade: {dashboardData.death_rate ?? 0}%
             </p>
           </CardContent>
         </Card>
@@ -207,9 +236,11 @@ const Dashboard = () => {
             <CardTitle>Doenças Monitoradas</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">
-            {Array.isArray(dashboardData.cases_by_disease) ? dashboardData.cases_by_disease.length : 0}
+            {Array.isArray(dashboardData.cases_by_disease)
+              ? dashboardData.cases_by_disease.length
+              : 0}
             <p className="text-xs text-muted-foreground">
-              {isPrefeitura ? cityName : 'Brasil'}
+              {isPrefeitura ? cityName : "Brasil"}
             </p>
           </CardContent>
         </Card>
@@ -220,19 +251,30 @@ const Dashboard = () => {
         <Card>
           <CardHeader>
             <CardTitle>
-              {isPrefeitura ? `Evolução Mensal de Casos - ${cityName}` : 'Evolução Mensal de Casos'}
+              {isPrefeitura
+                ? `Evolução Mensal de Casos - ${cityName}`
+                : "Evolução Mensal de Casos"}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={dashboardData.cases_by_month || []}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Area dataKey="count" stroke="#2563eb" fill="#2563eb" fillOpacity={0.3} />
-              </AreaChart>
-            </ResponsiveContainer>
+            {!Array.isArray(dashboardData.cases_by_month) || dashboardData.cases_by_month.length === 0 ? (
+              <EmptyState message="Sem dados de evolução mensal." />
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={dashboardData.cases_by_month}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip />
+                  <Area
+                    dataKey="count"
+                    stroke="#2563eb"
+                    fill="#2563eb"
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -241,23 +283,27 @@ const Dashboard = () => {
             <CardTitle>Distribuição por Doença</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={dashboardData.cases_by_disease || []}
-                  dataKey="count"
-                  nameKey="disease"
-                  outerRadius={100}
-                  label
-                >
-                  {(dashboardData.cases_by_disease || []).map((_, index) => (
-                    <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            {!Array.isArray(dashboardData.cases_by_disease) || dashboardData.cases_by_disease.length === 0 ? (
+              <EmptyState message="Sem dados de distribuição por doença." />
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={dashboardData.cases_by_disease}
+                    dataKey="count"
+                    nameKey="disease"
+                    outerRadius={100}
+                    label
+                  >
+                    {dashboardData.cases_by_disease.map((_, index) => (
+                      <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -270,9 +316,7 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             {!ufStackedData.length ? (
-              <div className="text-sm text-muted-foreground">
-                Sem dados suficientes para UF x Doença.
-              </div>
+              <EmptyState message="Sem dados suficientes para UF x Doença." />
             ) : (
               <ResponsiveContainer width="100%" height={360}>
                 <BarChart data={ufStackedData}>
@@ -293,6 +337,7 @@ const Dashboard = () => {
                 </BarChart>
               </ResponsiveContainer>
             )}
+
             <p className="mt-2 text-xs text-muted-foreground">
               * Brasil - Mostrando Top 10 UFs por total.
             </p>
@@ -308,9 +353,7 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             {cityData.length === 0 ? (
-              <div className="text-sm text-muted-foreground">
-                Sem dados do município.
-              </div>
+              <EmptyState message="Sem dados do município." />
             ) : (
               <div className="overflow-auto border rounded-lg">
                 <table className="min-w-full text-sm">
@@ -322,17 +365,20 @@ const Dashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {cityData.map((row) => (
-                      <tr key={row.city} className="hover:bg-gray-50">
+                    {cityData.map((row, index) => (
+                      <tr key={`${row.city}-${index}`} className="hover:bg-gray-50">
                         <td className="px-4 py-3 font-semibold text-gray-900">{row.city}</td>
                         <td className="px-4 py-3">{row.uf}</td>
-                        <td className="px-4 py-3">{Number(row.count || 0).toLocaleString('pt-BR')}</td>
+                        <td className="px-4 py-3">
+                          {Number(row.count || 0).toLocaleString("pt-BR")}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+
             <p className="mt-2 text-xs text-muted-foreground">
               * Dados epidemiológicos do tenant prefeitura.
             </p>
