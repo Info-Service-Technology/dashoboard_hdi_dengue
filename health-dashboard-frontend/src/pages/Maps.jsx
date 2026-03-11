@@ -1,10 +1,15 @@
-// src/pages/Maps.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
+import FiltersBar from "../components/filters/FiltersBar";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMapEvents } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import PageLoading from "../components/common/PageLoading";
+import InlineLoading from "../components/common/InlineLoading";
+import ErrorState from "../components/common/ErrorState";
+import EmptyState from "../components/common/EmptyState";
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -13,7 +18,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// Tracker de viewport: pega zoom + bbox sempre que mover/zoomear
 function MapViewportTracker({ onViewport }) {
   useMapEvents({
     moveend: (e) => {
@@ -37,11 +41,14 @@ function MapViewportTracker({ onViewport }) {
 }
 
 export default function Maps() {
-  const { token, tenant } = useAuth();
-
-  const tenantScopeType = String(tenant?.scope_type || "BR").toUpperCase(); // BR|UF|MUN
-  const tenantScopeValue = String(tenant?.scope_value || "all");
-  const isPrefeitura = tenantScopeType === "MUN";
+  const { token } = useAuth();
+  const {
+    loadingTenant,
+    tenantName,
+    scopeType,
+    scopeValue,
+    isMunicipal,
+  } = useTenant();
 
   const [healthData, setHealthData] = useState([]);
   const [selectedDisease, setSelectedDisease] = useState("all");
@@ -52,16 +59,24 @@ export default function Maps() {
 
   const [viewport, setViewport] = useState({ zoom: 4, bbox: null });
 
-  // ✅ Prefeitura: sempre "municipio" (não faz sentido "UF")
-  const level = isPrefeitura ? "municipio" : viewport.zoom < 6 ? "uf" : "municipio";
+  const level = isMunicipal ? "municipio" : viewport.zoom < 6 ? "uf" : "municipio";
 
   const reqSeq = useRef(0);
   const mapRef = useRef(null);
 
-  // ✅ quando for MUN, não faz sentido filtrar UF: trava em "all"
   useEffect(() => {
-    if (isPrefeitura) setSelectedUF("all");
-  }, [isPrefeitura]);
+    if (isMunicipal) setSelectedUF("all");
+  }, [isMunicipal]);
+
+  useEffect(() => {
+    if (loadingTenant) return;
+
+    setHealthData([]);
+    setSelectedDisease("all");
+    setSelectedUF("all");
+    setViewport({ zoom: 4, bbox: null });
+    setError("");
+  }, [loadingTenant, scopeType, scopeValue]);
 
   const getMarkerColor = (disease) => {
     const colors = {
@@ -74,7 +89,6 @@ export default function Maps() {
     return colors[disease] || "#64748b";
   };
 
-  // Ícone pequeno FIXO para UF (não tapa cliques)
   const ufIcon = useCallback((color) => {
     return L.divIcon({
       className: "",
@@ -106,17 +120,11 @@ export default function Maps() {
           return;
         }
 
-        const baseUrl =
-          lvl === "uf"
-            ? "http://localhost:5000/api/maps/uf"
-            : "http://localhost:5000/api/maps";
+        const baseUrl = lvl === "uf" ? "/api/maps/uf" : "/api/maps";
 
         const params = new URLSearchParams();
         params.set("disease", disease || "all");
         if (bbox) params.set("bbox", bbox);
-
-        // ✅ NÃO enviar municipio no querystring.
-        // O backend deve forçar escopo pelo JWT (tenant_scope_type/value).
 
         const response = await fetch(`${baseUrl}?${params.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -126,17 +134,19 @@ export default function Maps() {
 
         if (response.status === 401) {
           setHealthData([]);
-          setError("Não autorizado (token ausente/expirado). Faça login novamente.");
+          setError("Não autorizado (token ausente ou expirado). Faça login novamente.");
           return;
         }
 
         if (!response.ok) {
           const ct = response.headers.get("content-type") || "";
           let msg = `Erro ao buscar mapa (HTTP ${response.status}).`;
+
           if (ct.includes("application/json")) {
             const body = await response.json();
             msg = body?.error || msg;
           }
+
           setHealthData([]);
           setError(msg);
           return;
@@ -156,7 +166,7 @@ export default function Maps() {
   );
 
   useEffect(() => {
-    if (!token) {
+    if (!token || loadingTenant) {
       setHealthData([]);
       setLoading(false);
       return;
@@ -171,16 +181,19 @@ export default function Maps() {
     }, 250);
 
     return () => clearTimeout(t);
-  }, [token, level, selectedDisease, viewport.bbox, fetchHealthData]);
+  }, [token, loadingTenant, level, selectedDisease, viewport.bbox, fetchHealthData]);
 
-  // ✅ Prefeitura: ao carregar dados, centraliza/zoom no município (fitBounds)
   useEffect(() => {
-    if (!isPrefeitura) return;
+    if (!isMunicipal) return;
     if (!mapRef.current) return;
     if (!Array.isArray(healthData) || healthData.length === 0) return;
 
     const pts = healthData
-      .filter((x) => Number.isFinite(x?.lat) && Number.isFinite(x?.lng))
+      .map((x) => ({
+        lat: Number(x?.lat),
+        lng: Number(x?.lng),
+      }))
+      .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lng))
       .map((x) => [x.lat, x.lng]);
 
     if (pts.length === 0) return;
@@ -191,7 +204,7 @@ export default function Maps() {
     } catch {
       // noop
     }
-  }, [isPrefeitura, healthData]);
+  }, [isMunicipal, healthData]);
 
   const safeHealthData = Array.isArray(healthData) ? healthData : [];
 
@@ -205,120 +218,102 @@ export default function Maps() {
 
   const filteredData = useMemo(() => {
     let data = safeHealthData;
-    if (selectedDisease !== "all") data = data.filter((i) => i.disease === selectedDisease);
-    if (!isPrefeitura && selectedUF !== "all") data = data.filter((i) => i.state === selectedUF);
+
+    if (selectedDisease !== "all") {
+      data = data.filter((i) => i.disease === selectedDisease);
+    }
+
+    if (!isMunicipal && selectedUF !== "all") {
+      data = data.filter((i) => i.state === selectedUF);
+    }
+
     return data;
-  }, [safeHealthData, selectedDisease, selectedUF, isPrefeitura]);
+  }, [safeHealthData, selectedDisease, selectedUF, isMunicipal]);
 
-  // Tabela por UF (na área/dados carregados)
   const table = useMemo(() => {
-  const diseaseCols = Array.from(new Set(filteredData.map((i) => i.disease).filter(Boolean))).sort();
+    const diseaseCols = Array.from(new Set(filteredData.map((i) => i.disease).filter(Boolean))).sort();
 
-  // ✅ chave muda conforme modo
-  const keyName = isPrefeitura ? "city" : "state";
-  const labelName = isPrefeitura ? "Município" : "UF";
+    const keyName = isMunicipal ? "city" : "state";
+    const labelName = isMunicipal ? "Município" : "UF";
 
-  const byKey = new Map();
+    const byKey = new Map();
 
-  for (const item of filteredData) {
-    const key = (item[keyName] || "??").toString();
-    const dis = item.disease || "N/A";
-    const cases = Number(item.cases || 0);
+    for (const item of filteredData) {
+      const key = (item[keyName] || "??").toString();
+      const dis = item.disease || "N/A";
+      const cases = Number(item.cases || 0);
 
-    if (!byKey.has(key)) byKey.set(key, { key, total: 0 });
-    const row = byKey.get(key);
+      if (!byKey.has(key)) byKey.set(key, { key, total: 0 });
+      const row = byKey.get(key);
 
-    row[dis] = (row[dis] || 0) + cases;
-    row.total += cases;
-  }
+      row[dis] = (row[dis] || 0) + cases;
+      row.total += cases;
+    }
 
-  const rows = Array.from(byKey.values()).sort((a, b) => (b.total || 0) - (a.total || 0));
+    const rows = Array.from(byKey.values()).sort((a, b) => (b.total || 0) - (a.total || 0));
     return { diseaseCols, rows, labelName };
-  }, [filteredData, isPrefeitura]);
+  }, [filteredData, isMunicipal]);
+
+  if (loadingTenant) {
+    return <PageLoading message="Carregando escopo do tenant..."/>;
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h1 className="text-3xl font-bold text-gray-900">Análise Geográfica</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Análise Geográfica</h1>
+          <p className="text-sm text-gray-500">
+            Tenant: {tenantName} | Escopo: {scopeType} - {scopeValue}
+          </p>
+        </div>
 
         <div className="flex flex-wrap items-center gap-3 bg-white p-2 rounded-lg shadow-sm border">
-          <div className="flex items-center space-x-2">
-            <label htmlFor="disease-filter" className="text-sm font-semibold text-gray-600">
-              Doença:
-            </label>
-            <select
-              id="disease-filter"
-              value={selectedDisease}
-              onChange={(e) => setSelectedDisease(e.target.value)}
-              className="bg-transparent focus:outline-none text-blue-600 font-bold"
-            >
-              <option value="all">Todas</option>
-              {diseases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* ✅ UF só aparece fora de Prefeitura */}
-          {!isPrefeitura && (
-            <div className="flex items-center space-x-2">
-              <label htmlFor="uf-filter" className="text-sm font-semibold text-gray-600">
-                UF:
-              </label>
-              <select
-                id="uf-filter"
-                value={selectedUF}
-                onChange={(e) => setSelectedUF(e.target.value)}
-                className="bg-transparent focus:outline-none text-blue-600 font-bold"
-              >
-                <option value="all">Todas</option>
-                {ufs.map((uf) => (
-                  <option key={uf} value={uf}>
-                    {uf}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <FiltersBar
+            diseaseValue={selectedDisease}
+            onDiseaseChange={setSelectedDisease}
+            diseaseOptions={diseases}
+            ufValue={selectedUF}
+            onUFChange={setSelectedUF}
+            ufOptions={ufs}
+            hideUF={isMunicipal}
+            hideDateRange={true}
+            hideGranularity={true}
+            loading={loading}
+          />
 
           <span className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700">
-            {isPrefeitura ? "Modo Prefeitura" : level === "uf" ? "Visão UF" : "Visão Municípios"}
+            {isMunicipal ? "Modo Prefeitura" : level === "uf" ? "Visão UF" : "Visão Municípios"}
           </span>
 
-          {loading && <span className="text-xs text-gray-500">Atualizando…</span>}
+          {loading && <InlineLoading message="Atualizando..." />}
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 p-3 rounded">
-          <p className="text-red-700 text-sm">{error}</p>
-        </div>
-      )}
+      {error && <ErrorState message={error} />}
 
       <div className="bg-white rounded-xl shadow-xl p-4 border border-gray-100">
         <div className="h-[600px] rounded-lg overflow-hidden relative z-0">
           <MapContainer
+            key={`${scopeType}-${scopeValue}`}
             center={[-14.235, -51.9253]}
             zoom={4}
             style={{ height: "100%", width: "100%" }}
             whenCreated={async (map) => {
               mapRef.current = map;
 
-              // viewport inicial
               const b = map.getBounds();
               setViewport({
                 zoom: map.getZoom(),
                 bbox: `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`,
               });
 
-              // ✅ modo prefeitura: centraliza no municipio do tenant
-              if (isPrefeitura && tenantScopeValue && tenantScopeValue !== "all") {
+              if (isMunicipal && scopeValue && scopeValue !== "all") {
                 try {
-                  const res = await fetch(`http://localhost:5000/api/geo/municipality/${tenantScopeValue}`, {
+                  const res = await fetch(`/api/geo/municipality/${scopeValue}`, {
                     headers: { Authorization: `Bearer ${token}` },
                   });
+
                   if (res.ok) {
                     const m = await res.json();
                     if (m?.latitude && m?.longitude) {
@@ -338,11 +333,11 @@ export default function Maps() {
               attribution='&copy; <a href="https://www.openstreetmap.org">OpenStreetMap</a>'
             />
 
-            {/* UF: marker pequeno fixo + tooltip/popup */}
-            {!isPrefeitura &&
+            {!isMunicipal &&
               level === "uf" &&
               filteredData.map((item, idx) => {
                 const color = getMarkerColor(item.disease);
+
                 return (
                   <Marker
                     key={`${item.state}-${item.disease}-${idx}`}
@@ -371,8 +366,7 @@ export default function Maps() {
                 );
               })}
 
-            {/* Município: cluster */}
-            {(isPrefeitura || level === "municipio") && (
+            {(isMunicipal || level === "municipio") && (
               <MarkerClusterGroup
                 chunkedLoading
                 spiderfyOnMaxZoom
@@ -381,7 +375,10 @@ export default function Maps() {
                 maxClusterRadius={50}
               >
                 {filteredData.map((item, idx) => (
-                  <Marker key={`${item.state}-${item.city}-${item.disease}-${idx}`} position={[item.lat, item.lng]}>
+                  <Marker
+                    key={`${item.state}-${item.city}-${item.disease}-${idx}`}
+                    position={[item.lat, item.lng]}
+                  >
                     <Popup>
                       <div className="min-w-[170px]">
                         <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Município</div>
@@ -401,18 +398,23 @@ export default function Maps() {
           </MapContainer>
         </div>
 
-        {/* Tabela por UF (mantida) */}
         <div className="mt-4 bg-white border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between">
             <div className="font-bold text-gray-900">
-              {isPrefeitura ? "Casos no município" : "Casos por UF"}
+              {isMunicipal ? "Casos no município" : "Casos por UF"}
             </div>
             <div className="text-xs text-gray-600">
               Doença: <span className="font-semibold">{selectedDisease}</span>
-              {isPrefeitura ? (
-                <> | Município: <span className="font-semibold">{table.rows?.[0]?.key || "—"}</span></>
+              {isMunicipal ? (
+                <>
+                  {" "}
+                  | Município: <span className="font-semibold">{tenantName}</span>
+                </>
               ) : (
-                <> | UF: <span className="font-semibold">{selectedUF}</span></>
+                <>
+                  {" "}
+                  | UF: <span className="font-semibold">{selectedUF}</span>
+                </>
               )}
             </div>
           </div>
@@ -442,7 +444,6 @@ export default function Maps() {
                   table.rows.map((row) => (
                     <tr key={row.key} className="hover:bg-gray-50">
                       <td className="px-4 py-2 font-semibold text-gray-900">{row.key}</td>
-
                       {table.diseaseCols.map((d) => (
                         <td key={`${row.key}-${d}`} className="px-4 py-2 text-gray-700">
                           {row[d] ? row[d].toLocaleString("pt-BR") : "0"}
@@ -459,11 +460,11 @@ export default function Maps() {
           </div>
 
           <div className="px-4 py-3 border-t text-xs text-gray-600">
-            Dica: dê zoom para alternar UF ↔ Municípios. O bbox limita a consulta ao que está na tela (quando disponível).
+            Dica: dê zoom para alternar UF ↔ Municípios. O bbox limita a consulta ao que está na tela
+            (quando disponível).
           </div>
         </div>
       </div>
     </div>
   );
-  
 }
