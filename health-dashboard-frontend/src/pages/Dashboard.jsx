@@ -11,6 +11,7 @@ import EmptyState from "../components/common/EmptyState";
 import {
   AreaChart,
   Area,
+  Line,
   PieChart,
   Pie,
   Cell,
@@ -38,7 +39,7 @@ const COLORS = [
 
 const Dashboard = () => {
   const { user, isAdmin, token } = useAuth();
-  const { tenantName, scopeType, isMunicipal, loadingTenant } = useTenant();
+  const { tenantName, scopeType, scopeValue, isMunicipal, loadingTenant } = useTenant();
 
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -88,7 +89,7 @@ const Dashboard = () => {
     return () => {
       alive = false;
     };
-  }, [token, scopeType]);
+  }, [token, scopeType, scopeValue]);
 
   const { ufStackedData, diseaseKeys } = useMemo(() => {
     const rows = dashboardData?.cases_by_uf_disease;
@@ -137,9 +138,43 @@ const Dashboard = () => {
   }, [dashboardData]);
 
   const cityName = useMemo(() => {
-    if (!isPrefeitura) return "Brasil";
-    return dashboardData?.scope?.city_name || cityData?.[0]?.city || tenantName || "Município";
-  }, [isPrefeitura, dashboardData, cityData, tenantName]);
+  if (!isPrefeitura) return null;
+  return dashboardData?.scope?.city_name || tenantName || "Município";
+}, [isPrefeitura, dashboardData, tenantName]);
+
+  const casesByMonthWithMovingAvg = useMemo(() => {
+  const raw = Array.isArray(dashboardData?.cases_by_month)
+      ? dashboardData.cases_by_month
+      : [];
+
+  const normalized = raw.map((item) => ({
+      month: item.month,
+      count: Number(item.count || 0),
+  }));
+
+  return normalized.map((item, index, arr) => {
+      if (index < 2) {
+        return {
+          ...item,
+          moving_avg_3: null,
+      };
+    }
+
+  const windowValues = [
+        Number(arr[index - 2]?.count || 0),
+        Number(arr[index - 1]?.count || 0),
+        Number(arr[index]?.count || 0),
+  ];
+
+  const avg =
+        windowValues.reduce((acc, value) => acc + value, 0) / windowValues.length;
+
+    return {
+        ...item,
+        moving_avg_3: Number(avg.toFixed(2)),
+      };
+    });
+  }, [dashboardData]);
 
   if (loading || loadingTenant) {
     return <PageLoading message="Carregando dashboard..." />;
@@ -155,7 +190,6 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6">
-      {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">
@@ -189,7 +223,6 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader>
@@ -233,20 +266,17 @@ const Dashboard = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Doenças Monitoradas</CardTitle>
+            <CardTitle>Incidência por 100 mil hab.</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">
-            {Array.isArray(dashboardData.cases_by_disease)
-              ? dashboardData.cases_by_disease.length
-              : 0}
+            {Number(dashboardData.incidence_per_100k || 0).toLocaleString("pt-BR")}
             <p className="text-xs text-muted-foreground">
-              {isPrefeitura ? cityName : "Brasil"}
+              População base: {Number(dashboardData.population || 0).toLocaleString("pt-BR")}
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* GRÁFICOS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -257,20 +287,34 @@ const Dashboard = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!Array.isArray(dashboardData.cases_by_month) || dashboardData.cases_by_month.length === 0 ? (
+            {!casesByMonthWithMovingAvg.length ? (
               <EmptyState message="Sem dados de evolução mensal." />
             ) : (
               <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={dashboardData.cases_by_month}>
+                <AreaChart data={casesByMonthWithMovingAvg}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
                   <YAxis />
                   <Tooltip />
+                  <Legend />
+
                   <Area
+                    type="monotone"
                     dataKey="count"
+                    name="Casos"
                     stroke="#2563eb"
                     fill="#2563eb"
-                    fillOpacity={0.3}
+                    fillOpacity={0.25}
+                  />
+
+                  <Line
+                    type="monotone"
+                    dataKey="moving_avg_3"
+                    name="Média móvel (3 períodos)"
+                    stroke="#f59e0b"
+                    strokeWidth={3}
+                    dot={{ r: 3 }}
+                    connectNulls={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -308,7 +352,6 @@ const Dashboard = () => {
         </Card>
       </div>
 
-      {/* BRASIL: CASOS POR UF */}
       {!isPrefeitura && (
         <Card>
           <CardHeader>
@@ -345,7 +388,6 @@ const Dashboard = () => {
         </Card>
       )}
 
-      {/* PREFEITURA: CASOS NO MUNICÍPIO */}
       {isPrefeitura && (
         <Card>
           <CardHeader>

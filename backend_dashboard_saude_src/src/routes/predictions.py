@@ -13,7 +13,7 @@ predictions_bp = Blueprint("predictions", __name__)
 def _tenant_scope():
     claims = get_jwt() or {}
     scope_type = (claims.get("tenant_scope_type") or "BR").strip().upper()
-    scope_value = (claims.get("tenant_scope_value") or "all").strip()
+    scope_value = str(claims.get("tenant_scope_value") or "all").strip()
     tenant_slug = (claims.get("tenant") or "br").strip().lower()
 
     if scope_type == "BR":
@@ -59,6 +59,8 @@ def _get_tenant_session(bind_key: str):
 
 
 def _get_supported_diseases(ds_row):
+    if not ds_row:
+        return []
     raw = ds_row["supported_diseases_json"]
     if not raw:
         return []

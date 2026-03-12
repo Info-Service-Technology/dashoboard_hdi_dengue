@@ -52,6 +52,8 @@ def _get_tenant_session(bind_key: str):
 
 
 def _get_supported_diseases(ds_row):
+    if not ds_row:
+        return []
     raw = ds_row["supported_diseases_json"]
     if not raw:
         return []
@@ -112,6 +114,7 @@ def _base_query():
     return q, disease, uf, start_d, end_d
 
 
+@data_bp.route("/data", methods=["GET"])
 @data_bp.route("/data/cases", methods=["GET"])
 @jwt_required()
 def list_cases():
@@ -244,10 +247,13 @@ def list_cases():
                     "id": f"{r['ibge']}-{r['disease_name']}-{r['dt_notific_ref']}",
                     "dt_notific": r["dt_notific_ref"].isoformat() if r["dt_notific_ref"] else None,
                     "disease_name": r["disease_name"],
+                    "disease": r["disease_name"],
                     "uf": r["uf"],
                     "municipality": r["municipality"],
+                    "city": r["municipality"],
                     "ibge": r["ibge"],
                     "count": int(r["count"] or 0),
+                    "cases": int(r["count"] or 0),
                     "note": r["note"],
                 })
 
@@ -287,6 +293,13 @@ def list_cases():
             func.lower(HealthCase.disease_name).like(s)
         )
 
+    if scope_type == "UF":
+        q = q.filter(func.upper(Municipality.uf) == scope_value)
+    elif scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            q = q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+
     sort = (request.args.get("sort") or "dt_notific").strip()
     direction = (request.args.get("dir") or "desc").strip().lower()
     order_fn = desc if direction == "desc" else asc
@@ -314,9 +327,12 @@ def list_cases():
             "id": getattr(hc, "id", None),
             "dt_notific": hc.dt_notific.isoformat() if hc.dt_notific else None,
             "disease_name": hc.disease_name,
+            "disease": hc.disease_name,
             "uf": m.uf,
             "municipality": m.name,
+            "city": m.name,
             "ibge": m.id,
+            "cases": 1,
         })
 
     return jsonify({
@@ -337,7 +353,7 @@ def list_cases():
             "tenant_slug": tenant_slug,
             "scope_type": scope_type,
             "scope_value": scope_value,
-            "mode": "brasil"
+            "mode": "prefeitura" if scope_type == "MUN" else "brasil"
         }
     }), 200
 
@@ -352,7 +368,7 @@ def data_meta():
         supported_diseases = _get_supported_diseases(ds)
         return jsonify({
             "diseases": [d.title() for d in supported_diseases],
-            "ufs": ["RJ"],
+            "ufs": [],
             "scope": {
                 "tenant_slug": tenant_slug,
                 "scope_type": scope_type,

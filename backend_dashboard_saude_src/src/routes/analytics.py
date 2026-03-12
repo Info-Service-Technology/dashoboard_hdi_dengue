@@ -1,12 +1,12 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
-from sqlalchemy import func, text
+from sqlalchemy import func, text, cast, String
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
 
 from src.models.user import db
-from src.models.health_data import HealthCase
+from src.models.health_data import HealthCase, Municipality
 
 analytics_bp = Blueprint("analytics", __name__)
 
@@ -52,6 +52,8 @@ def _get_tenant_session(bind_key: str):
 
 
 def _get_supported_diseases(ds_row):
+    if not ds_row:
+        return []
     raw = ds_row["supported_diseases_json"]
     if not raw:
         return []
@@ -118,6 +120,22 @@ def _build_period_filter(start_date, end_date, gran_db):
     return clauses, params
 
 
+def _municipality_scope_info(scope_value: str):
+    mun6 = _mun_code6(scope_value)
+    if not mun6:
+        return None, None
+
+    row = (
+        db.session.query(Municipality.name, Municipality.uf)
+        .filter(func.left(cast(Municipality.id, String), 6) == mun6)
+        .first()
+    )
+    if not row:
+        return None, None
+
+    return row[0], row[1]
+
+
 @analytics_bp.route("/analytics", methods=["GET"])
 @jwt_required()
 def analytics():
@@ -125,16 +143,21 @@ def analytics():
     gran = (request.args.get("gran") or "month").strip().lower()
     start = _parse_date(request.args.get("start"))
     end = _parse_date(request.args.get("end"))
+    requested_uf = (request.args.get("uf") or "all").strip().upper()
 
     scope_type, scope_value, tenant_slug = _tenant_scope()
     ds = _resolve_tenant_data_source(tenant_slug)
 
+    # =====================================================
+    # MODO TENANT MUNICIPAL COM DATA SOURCE ESPECÍFICO
+    # =====================================================
     if scope_type == "MUN" and ds:
         try:
             sess = _get_tenant_session(ds["bind_key"])
             view_name = ds["aggregate_view_name"]
             supported_diseases = _get_supported_diseases(ds)
             mun6 = _mun_code6(scope_value)
+            city_name, city_uf = _municipality_scope_info(scope_value)
 
             if not mun6:
                 return jsonify({"error": "Tenant MUN inválido (scope_value)"}), 400
@@ -154,10 +177,12 @@ def analytics():
                     "scope": {
                         "tenant_slug": tenant_slug,
                         "scope_type": scope_type,
-                        "scope_value": scope_value
+                        "scope_value": scope_value,
+                        "city_name": city_name
                     },
                     "filters": {
                         "disease": disease,
+                        "uf": "all",
                         "start": request.args.get("start"),
                         "end": request.args.get("end"),
                         "gran": gran
@@ -199,16 +224,15 @@ def analytics():
 
             sql_kpi = f"""
                 SELECT
-                    COALESCE(SUM(v.casos), 0) AS total_cases,
-                    COUNT(DISTINCT v.municipio) AS municipality_count
+                    COALESCE(SUM(v.casos), 0) AS total_cases
                 FROM {view_name} v
                 {where_sql}
             """
             kpi = sess.execute(text(sql_kpi), params).mappings().first()
 
             total_cases = int((kpi["total_cases"] if kpi else 0) or 0)
-            municipality_count = int((kpi["municipality_count"] if kpi else 0) or 0)
-            uf_count = 1 if municipality_count > 0 else 0
+            municipality_count = 1 if total_cases > 0 else 0
+            uf_count = 0
 
             sql_comp = f"""
                 SELECT
@@ -225,8 +249,21 @@ def analytics():
             """
             comp_rows = sess.execute(text(sql_comp), params).mappings().all()
 
-            delta_vs_previous = 0
-            delta_label = "Sem dados na janela" if total_cases == 0 else "0"
+            comparatives = [
+                {
+                    "city": r["city"],
+                    "uf": r["uf"],
+                    "count": int(r["count"] or 0)
+                }
+                for r in comp_rows
+            ]
+
+            if not comparatives and total_cases > 0 and city_name:
+                comparatives = [{
+                    "city": city_name,
+                    "uf": city_uf,
+                    "count": total_cases
+                }]
 
             cases_by_period = [
                 {
@@ -241,27 +278,22 @@ def analytics():
                 "cases_in_period": total_cases,
                 "uf_count": uf_count,
                 "municipality_count": municipality_count,
-                "delta_vs_previous": delta_vs_previous,
-                "delta_label": delta_label,
+                "delta_vs_previous": 0,
+                "delta_label": "0",
                 "cases_by_period": cases_by_period,
                 "cases_by_month": cases_by_period,
-                "comparatives": [
-                    {
-                        "city": r["city"],
-                        "uf": r["uf"],
-                        "count": int(r["count"] or 0)
-                    }
-                    for r in comp_rows
-                ],
+                "comparatives": comparatives,
                 "mode": "prefeitura",
                 "granularity": gran_front,
                 "scope": {
                     "tenant_slug": tenant_slug,
                     "scope_type": scope_type,
-                    "scope_value": scope_value
+                    "scope_value": scope_value,
+                    "city_name": city_name
                 },
                 "filters": {
                     "disease": disease,
+                    "uf": "all",
                     "start": request.args.get("start"),
                     "end": request.args.get("end"),
                     "gran": gran_front
@@ -272,48 +304,170 @@ def analytics():
             print(f"❌ analytics tenant ({tenant_slug}): {e}")
             return jsonify({"error": "Erro interno ao processar analytics do tenant"}), 500
 
-    q = db.session.query(
-        func.date_format(HealthCase.dt_notific, "%Y-%m").label("month"),
-        func.count(HealthCase.id).label("count")
+    # =====================================================
+    # FALLBACK GENÉRICO: BR / UF / MUN
+    # =====================================================
+
+    city_name, city_uf = (None, None)
+    if scope_type == "MUN":
+        city_name, city_uf = _municipality_scope_info(scope_value)
+
+    q_series = (
+        db.session.query(
+            func.date_format(HealthCase.dt_notific, "%Y-%m").label("month"),
+            func.count(HealthCase.id).label("count")
+        )
+        .join(
+            Municipality,
+            func.left(cast(Municipality.id, String), 6) == func.substr(HealthCase.id_municip, 1, 6)
+        )
+        .filter(HealthCase.dt_notific.isnot(None))
     )
 
     if disease != "all":
-        q = q.filter(func.lower(HealthCase.disease_name) == disease)
+        q_series = q_series.filter(func.lower(HealthCase.disease_name) == disease)
 
     if scope_type == "UF":
-        q = q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+        q_series = q_series.filter(func.upper(Municipality.uf) == scope_value)
     elif scope_type == "MUN":
         mun6 = _mun_code6(scope_value)
         if mun6:
-            q = q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+            q_series = q_series.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+    elif scope_type == "BR" and requested_uf != "ALL":
+        q_series = q_series.filter(func.upper(Municipality.uf) == requested_uf)
 
     if start:
-        q = q.filter(HealthCase.dt_notific >= start)
+        q_series = q_series.filter(HealthCase.dt_notific >= start)
     if end:
-        q = q.filter(HealthCase.dt_notific <= end)
+        q_series = q_series.filter(HealthCase.dt_notific <= end)
 
-    rows = q.filter(HealthCase.dt_notific.isnot(None)).group_by("month").order_by("month").all()
+    rows = q_series.group_by("month").order_by("month").all()
 
-    total_cases_q = db.session.query(func.count(HealthCase.id))
+    q_total = (
+        db.session.query(func.count(HealthCase.id))
+        .join(
+            Municipality,
+            func.left(cast(Municipality.id, String), 6) == func.substr(HealthCase.id_municip, 1, 6)
+        )
+        .filter(HealthCase.dt_notific.isnot(None))
+    )
 
     if disease != "all":
-        total_cases_q = total_cases_q.filter(func.lower(HealthCase.disease_name) == disease)
+        q_total = q_total.filter(func.lower(HealthCase.disease_name) == disease)
 
     if scope_type == "UF":
-        total_cases_q = total_cases_q.filter(func.upper(HealthCase.sg_uf_not) == scope_value)
+        q_total = q_total.filter(func.upper(Municipality.uf) == scope_value)
     elif scope_type == "MUN":
         mun6 = _mun_code6(scope_value)
         if mun6:
-            total_cases_q = total_cases_q.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+            q_total = q_total.filter(func.substr(HealthCase.id_municip, 1, 6) == mun6)
+    elif scope_type == "BR" and requested_uf != "ALL":
+        q_total = q_total.filter(func.upper(Municipality.uf) == requested_uf)
 
     if start:
-        total_cases_q = total_cases_q.filter(HealthCase.dt_notific >= start)
+        q_total = q_total.filter(HealthCase.dt_notific >= start)
     if end:
-        total_cases_q = total_cases_q.filter(HealthCase.dt_notific <= end)
+        q_total = q_total.filter(HealthCase.dt_notific <= end)
 
-    total_cases = int(total_cases_q.scalar() or 0)
-    municipality_count = 1 if scope_type == "MUN" and total_cases > 0 else 0
-    uf_count = 1 if scope_type == "MUN" and total_cases > 0 else 0
+    total_cases = int(q_total.scalar() or 0)
+
+    q_uf_count = (
+        db.session.query(func.count(func.distinct(Municipality.uf)))
+        .join(
+            HealthCase,
+            func.left(cast(Municipality.id, String), 6) == func.substr(HealthCase.id_municip, 1, 6)
+        )
+        .filter(HealthCase.dt_notific.isnot(None))
+    )
+
+    q_municipality_count = (
+        db.session.query(func.count(func.distinct(func.left(cast(Municipality.id, String), 6))))
+        .join(
+            HealthCase,
+            func.left(cast(Municipality.id, String), 6) == func.substr(HealthCase.id_municip, 1, 6)
+        )
+        .filter(HealthCase.dt_notific.isnot(None))
+    )
+
+    if disease != "all":
+        q_uf_count = q_uf_count.filter(func.lower(HealthCase.disease_name) == disease)
+        q_municipality_count = q_municipality_count.filter(func.lower(HealthCase.disease_name) == disease)
+
+    if scope_type == "UF":
+        q_uf_count = q_uf_count.filter(func.upper(Municipality.uf) == scope_value)
+        q_municipality_count = q_municipality_count.filter(func.upper(Municipality.uf) == scope_value)
+    elif scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            q_uf_count = q_uf_count.filter(func.left(cast(Municipality.id, String), 6) == mun6)
+            q_municipality_count = q_municipality_count.filter(func.left(cast(Municipality.id, String), 6) == mun6)
+    elif scope_type == "BR" and requested_uf != "ALL":
+        q_uf_count = q_uf_count.filter(func.upper(Municipality.uf) == requested_uf)
+        q_municipality_count = q_municipality_count.filter(func.upper(Municipality.uf) == requested_uf)
+
+    if start:
+        q_uf_count = q_uf_count.filter(HealthCase.dt_notific >= start)
+        q_municipality_count = q_municipality_count.filter(HealthCase.dt_notific >= start)
+    if end:
+        q_uf_count = q_uf_count.filter(HealthCase.dt_notific <= end)
+        q_municipality_count = q_municipality_count.filter(HealthCase.dt_notific <= end)
+
+    uf_count = int(q_uf_count.scalar() or 0)
+    municipality_count = int(q_municipality_count.scalar() or 0)
+
+    q_comp = (
+        db.session.query(
+            Municipality.name.label("city"),
+            Municipality.uf.label("uf"),
+            func.count(HealthCase.id).label("count")
+        )
+        .join(
+            HealthCase,
+            func.left(cast(Municipality.id, String), 6) == func.substr(HealthCase.id_municip, 1, 6)
+        )
+        .filter(HealthCase.dt_notific.isnot(None))
+    )
+
+    if disease != "all":
+        q_comp = q_comp.filter(func.lower(HealthCase.disease_name) == disease)
+
+    if scope_type == "UF":
+        q_comp = q_comp.filter(func.upper(Municipality.uf) == scope_value)
+    elif scope_type == "MUN":
+        mun6 = _mun_code6(scope_value)
+        if mun6:
+            q_comp = q_comp.filter(func.left(cast(Municipality.id, String), 6) == mun6)
+    elif scope_type == "BR" and requested_uf != "ALL":
+        q_comp = q_comp.filter(func.upper(Municipality.uf) == requested_uf)
+
+    if start:
+        q_comp = q_comp.filter(HealthCase.dt_notific >= start)
+    if end:
+        q_comp = q_comp.filter(HealthCase.dt_notific <= end)
+
+    comp_rows = (
+        q_comp
+        .group_by(Municipality.name, Municipality.uf)
+        .order_by(func.count(HealthCase.id).desc())
+        .limit(10)
+        .all()
+    )
+
+    comparatives = [
+        {
+            "city": r.city,
+            "uf": r.uf,
+            "count": int(r.count or 0)
+        }
+        for r in comp_rows
+    ]
+
+    if scope_type == "MUN" and not comparatives and total_cases > 0 and city_name:
+        comparatives = [{
+            "city": city_name,
+            "uf": city_uf,
+            "count": total_cases
+        }]
 
     return jsonify({
         "cases_in_period": total_cases,
@@ -323,16 +477,22 @@ def analytics():
         "delta_label": "0",
         "cases_by_period": [{"period": r.month, "month": r.month, "count": int(r.count)} for r in rows],
         "cases_by_month": [{"month": r.month, "count": int(r.count)} for r in rows],
-        "comparatives": [],
-        "mode": "prefeitura" if scope_type == "MUN" else "brasil",
+        "comparatives": comparatives,
+        "mode": "prefeitura" if scope_type == "MUN" else ("brasil" if scope_type == "BR" else "uf"),
         "granularity": "month",
         "scope": {
             "tenant_slug": tenant_slug,
             "scope_type": scope_type,
-            "scope_value": scope_value
+            "scope_value": scope_value,
+            "city_name": city_name if scope_type == "MUN" else None
         },
         "filters": {
             "disease": disease,
+            "uf": (
+                "all" if scope_type == "MUN"
+                else requested_uf.lower() if scope_type == "BR"
+                else scope_value.lower()
+            ),
             "start": request.args.get("start"),
             "end": request.args.get("end"),
             "gran": gran
